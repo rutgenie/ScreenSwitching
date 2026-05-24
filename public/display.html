@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TV Output - ScreenSwitching</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body {
+      background: #000;
+      width: 100vw;
+      height: 100vh;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      cursor: none; /* Hide default cursor */
+    }
+
+    /* Transition-capable dual panels */
+    .scene-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .scene-container.active {
+      opacity: 1;
+      visibility: visible;
+      z-index: 2;
+    }
+
+    /* Start-up User Interaction Overlay */
+    .fullscreen-trigger-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(4, 5, 12, 0.95);
+      backdrop-filter: blur(10px);
+      z-index: 999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      cursor: pointer;
+      transition: opacity 0.5s ease;
+    }
+
+    .fullscreen-prompt-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 480px;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+
+    .fullscreen-prompt-card h2 {
+      font-size: 1.8rem;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #fff, var(--text-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .fullscreen-prompt-card p {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body class="display-body">
+
+  <!-- Interactive overlay triggering fullscreen permission and audio playbacks -->
+  <div class="fullscreen-trigger-overlay" id="fullscreen-overlay">
+    <div class="fullscreen-prompt-card">
+      <h2>Showing Screen Initiated</h2>
+      <p>Drag this browser window to your TV or HDMI Projector screen, then click anywhere on this window to activate <strong>Fullscreen Output</strong>.</p>
+      <button class="btn-accent" style="width:100%; font-size:1.05rem; padding:14px;">📺 Enter Fullscreen Mode</button>
+    </div>
+  </div>
+
+  <!-- Main Dual Layers for Crossfading Transitions (Studio Mixer Style) -->
+  <div class="scene-container" id="layer-container-a"></div>
+  <div class="scene-container" id="layer-container-b"></div>
+
+  <!-- Socket.io connection script -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Fullscreen Display script -->
+  <script src="/js/display.js"></script>
+</body>
+</html>

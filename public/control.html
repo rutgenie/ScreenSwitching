@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control Center - ScreenSwitching</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- LEFT SIDEBAR: Brand, Global Status, Collections, QR Code -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0-2-.9-2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/></svg>
+        </div>
+        <h1>ScreenSwitching</h1>
+      </div>
+      
+      <!-- Output Display status -->
+      <div class="display-connection-status">
+        <div class="status-row">
+          <span>TV/Projector Status:</span>
+          <span id="display-status-tag"><span class="status-dot inactive" id="display-status-dot"></span><strong id="display-status-text">Offline</strong></span>
+        </div>
+        <div class="status-row" id="display-res-row" style="display: none;">
+          <span>Active Resolution:</span>
+          <span id="display-resolution-text">N/A</span>
+        </div>
+      </div>
+      
+      <!-- Collections section -->
+      <div class="collections-section">
+        <div class="section-header">
+          <h3>Collections</h3>
+          <button class="btn-icon" id="btn-add-collection" title="Create Collection">+</button>
+        </div>
+        <ul class="collection-list" id="collection-list-container">
+          <!-- Collections loaded dynamically -->
+        </ul>
+      </div>
+      
+      <!-- Mobile remote barcode pairing -->
+      <div class="remote-pairing">
+        <h4>Mobile Remote Control</h4>
+        <p>Control scenes and audio from any smartphone on your local Wi-Fi.</p>
+        <a href="#" class="remote-link" id="remote-url-text" target="_blank">Locating network IP...</a>
+        <div class="qr-preview" id="remote-qr-container">
+          <div class="qr-canvas-holder">
+            <img id="remote-qr-img" src="" alt="Scan to control" style="display: none; width: 130px; height: 130px;">
+          </div>
+        </div>
+      </div>
+    </aside>
+    
+    <!-- MAIN WORKSPACE: Scene Selector, Source Managers, Screen Coordinates tool -->
+    <main class="main-workspace">
+      
+      <!-- Top header detailing active Collection -->
+      <header class="workspace-header">
+        <div class="active-collection-info">
+          <h2 id="active-collection-title">Select or Create a Collection</h2>
+        </div>
+        <div class="workspace-actions">
+          <button class="btn-secondary btn-delete" id="btn-delete-collection" style="display: none;">Delete Collection</button>
+        </div>
+      </header>
+      
+      <!-- Workspace Columns -->
+      <div class="workspace-grid">
+        
+        <!-- COLUMN 1: SCENES SELECTOR -->
+        <section class="scenes-column">
+          <div class="section-header">
+            <h3>Scenes</h3>
+            <button class="btn-icon" id="btn-add-scene" title="Add Scene">+</button>
+          </div>
+          <ul class="scene-list" id="scene-list-container">
+            <!-- Scenes loaded dynamically -->
+          </ul>
+        </section>
+        
+        <!-- COLUMN 2: SOURCE GRID (Images, Videos, Sounds, Text Overlays) -->
+        <section class="sources-column">
+          <div class="sources-header" style="flex-wrap: wrap; gap: 8px; padding-bottom: 12px;">
+            <h3 id="sources-title-text">Sources</h3>
+            <div class="workspace-actions" style="display: flex; gap: 6px; flex-wrap: wrap;">
+              <button class="btn-primary" id="btn-add-source" style="display: none;">+ Add New Source</button>
+              <button class="btn-secondary" id="btn-add-existing-source" style="display: none;">+ Add Existing Source</button>
+              <button class="btn-accent" id="btn-add-window-source" style="display: none;">+ Add Specific Window</button>
+            </div>
+          </div>
+          
+          <div class="sources-container" id="sources-list-container">
+            <!-- Sources populated dynamically -->
+            <div class="no-scene-placeholder">
+              <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              <p>Create and select a scene to start inserting media assets</p>
+            </div>
+          </div>
+        </section>
+        
+        <!-- COLUMN 3: TV STATUS, PREVIEW CANVAS, SCREEN MANAGEMENTS -->
+        <section class="program-column">
+          <div class="section-header">
+            <h3>Program Preview</h3>
+          </div>
+          
+          <!-- OBS Style Output Preview Box -->
+          <div class="program-preview-box">
+            <span class="program-label">Preview</span>
+            <div class="program-preview-canvas" id="preview-canvas">
+              <!-- Visual mirror of display screen sources -->
+              <span style="color: var(--text-muted); font-size: 0.75rem; z-index: 1;">No active scene selected</span>
+            </div>
+          </div>
+          
+          <!-- Screen coordinate and placement helper -->
+          <div class="screen-placement-panel">
+            <h3>Multi-Screen Control</h3>
+            <p style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">
+              Spawns the Showing Screen fullscreen onto secondary projectors/TVs.
+            </p>
+            
+            <button class="btn-accent" id="btn-launch-display" style="width: 100%;">
+              📺 Open Showing Screen
+            </button>
+            
+            <!-- Dynamic screen placement api feedback -->
+            <div id="screen-api-feedback" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+              <!-- Screen details loaded via Javascript -->
+            </div>
+          </div>
+        </section>
+        
+      </div>
+    </main>
+  </div>
+  
+  <!-- ==========================================
+       MODALS SECTION
+       ========================================== -->
+  
+  <!-- Modal 1: Create Collection -->
+  <div class="modal-overlay" id="modal-collection">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Create Event Collection</h3>
+        <button class="btn-icon" onclick="closeModal('modal-collection')">×</button>
+      </div>
+      <form id="form-create-collection">
+        <div class="form-group">
+          <label for="new-collection-name">Collection Name</label>
+          <input type="text" id="new-collection-name" class="input-text" placeholder="e.g. Wedding Event, Corporate Gala" required>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-secondary" onclick="closeModal('modal-collection')">Cancel</button>
+          <button type="submit" class="btn-primary">Create Collection</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 2: Create Scene -->
+  <div class="modal-overlay" id="modal-scene">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Create Scene</h3>
+        <button class="btn-icon" onclick="closeModal('modal-scene')">×</button>
+      </div>
+      <form id="form-create-scene">
+        <div class="form-group">
+          <label for="new-scene-name">Scene Title</label>
+          <input type="text" id="new-scene-name" class="input-text" placeholder="e.g. 01. Intro Backdrop, 02. Ring Ceremony" required>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn-secondary" onclick="closeModal('modal-scene')">Cancel</button>
+          <button type="submit" class="btn-primary">Create Scene</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 3: Add Source (File Upload or Text Configuration) -->
+  <div class="modal-overlay" id="modal-source">
+    <div class="modal-content" style="width: 520px;">
+      <div class="modal-header">
+        <h3>Insert Source Asset</h3>
+        <button class="btn-icon" onclick="closeModal('modal-source')">×</button>
+      </div>
+      
+      <!-- Source tabs (Media File vs Text Overlay) -->
+      <div style="display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 12px;">
+        <button class="btn-secondary btn-accent" id="tab-file-upload" type="button" style="flex: 1;" onclick="toggleSourceTab('file')">📁 Media File</button>
+        <button class="btn-secondary" id="tab-text-overlay" type="button" style="flex: 1;" onclick="toggleSourceTab('text')">✨ Text Overlay</button>
+      </div>
+      
+      <!-- TAB CONTENT A: FILE UPLOAD (Multer engine) -->
+      <div id="source-tab-file-content">
+        <form id="form-upload-media">
+          <div class="form-group">
+            <label for="media-file-name">Source Display Name (Optional)</label>
+            <input type="text" id="media-file-name" class="input-text" placeholder="e.g. Entrance Music, Background Slides">
+          </div>
+          
+          <div class="form-group">
+            <label>Upload File</label>
+            <div class="file-drag-area" id="file-drag-area">
+              <svg viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+              <p>Drag and drop files here, or click to browse</p>
+              <span>Supports Pictures (PNG, JPG), Videos (MP4), Sound (MP3, WAV)</span>
+              <input type="file" id="media-file-input" style="display: none;" accept="image/*,video/*,audio/*">
+            </div>
+            
+            <div style="margin-top: 8px; font-size: 0.8rem; color: var(--accent); display: none;" id="selected-file-label">
+              Selected File: <strong id="selected-file-name">None</strong>
+            </div>
+          </div>
+          
+          <!-- Upload Progress indicator -->
+          <div class="upload-progress-row" id="upload-progress-row">
+            <div class="progress-bar-bg">
+              <div class="progress-bar-fill" id="progress-bar-fill"></div>
+            </div>
+            <div class="progress-txt" id="progress-percentage">Uploading: 0%</div>
+          </div>
+          
+          <div class="form-actions">
+            <button type="button" class="btn-secondary" onclick="closeModal('modal-source')">Cancel</button>
+            <button type="submit" class="btn-primary" id="btn-upload-submit" disabled>Upload File</button>
+          </div>
+        </form>
+      </div>
+      
+      <!-- TAB CONTENT B: TEXT OVERLAY -->
+      <div id="source-tab-text-content" style="display: none;">
+        <form id="form-create-text-source">
+          <div class="form-group">
+            <label for="text-source-name">Source Display Name</label>
+            <input type="text" id="text-source-name" class="input-text" placeholder="e.g. Wedding Welcome Text" required>
+          </div>
+          <div class="form-group">
+            <label for="text-source-content">Content (Supports line breaks)</label>
+            <textarea id="text-source-content" class="text-input-field" placeholder="Enter message overlay..." required style="height: 100px;"></textarea>
+          </div>
+          
+          <div class="form-group">
+            <label>Text Positioning</label>
+            <div class="text-style-grid">
+              <div class="style-option selected" data-position="center" onclick="setTextPosition(this)">Center Screen</div>
+              <div class="style-option" data-position="top" onclick="setTextPosition(this)">Top Banner</div>
+              <div class="style-option" data-position="bottom" onclick="setTextPosition(this)">Lower Third</div>
+            </div>
+            <input type="hidden" id="text-source-position" value="center">
+          </div>
+          
+          <div class="form-actions">
+            <button type="button" class="btn-secondary" onclick="closeModal('modal-source')">Cancel</button>
+            <button type="submit" class="btn-primary">Create Text Overlay</button>
+          </div>
+        </form>
+      </div>
+      
+    </div>
+  </div>
+
+  <!-- Modal 4: Add Existing Source -->
+  <div class="modal-overlay" id="modal-existing-source">
+    <div class="modal-content" style="width: 500px;">
+      <div class="modal-header">
+        <h3>Select Existing Asset</h3>
+        <button class="btn-icon" onclick="closeModal('modal-existing-source')">×</button>
+      </div>
+      <div class="form-group">
+        <label>Previously Uploaded Files in this Collection</label>
+        <div class="library-grid" id="existing-library-grid">
+          <!-- Dynamic library cards loaded via JS -->
+        </div>
+      </div>
+      <div class="form-group" style="margin-top: 12px;">
+        <label for="existing-source-name">Source Display Name</label>
+        <input type="text" id="existing-source-name" class="input-text" placeholder="e.g. Background Loop (Scene 2)">
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-secondary" onclick="closeModal('modal-existing-source')">Cancel</button>
+        <button type="button" class="btn-primary" id="btn-add-existing-submit" disabled>Add to Scene</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Dropdown Floating Menu -->
+  <div class="context-menu" id="custom-context-menu"></div>
+
+  <!-- Socket.io connection script -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Main control dashboard script -->
+  <script src="/js/control.js"></script>
+</body>
+</html>

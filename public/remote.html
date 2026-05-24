@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mobile Remote - ScreenSwitching</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body {
+      touch-action: manipulation; /* Prevents 300ms double-tap delay on mobile */
+    }
+  </style>
+</head>
+<body class="remote-body">
+
+  <!-- Mobile Top brand and status bar -->
+  <header class="remote-header">
+    <div class="remote-brand">ScreenSwitching Remote</div>
+    <div id="remote-connection-tag">
+      <span class="status-dot active"></span> <span style="font-size:0.8rem; color:var(--text-secondary);">Connected</span>
+    </div>
+  </header>
+
+  <!-- Collection Switchboard dropdown -->
+  <div>
+    <label style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; display:block;">Active Collection</label>
+    <select class="remote-coll-select" id="remote-collection-dropdown">
+      <!-- Collection options loaded dynamically -->
+    </select>
+  </div>
+
+  <!-- Scenes Grid blocks (Tap-to-switch) -->
+  <div style="display:flex; flex-direction:column; gap:10px; margin-top:8px; flex-grow:1;">
+    <span class="remote-scenes-title">Scenes Selector</span>
+    <div class="remote-scenes-grid" id="remote-scenes-container">
+      <!-- Large grid buttons loaded dynamically -->
+      <div style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:30px;">Loading Scenes...</div>
+    </div>
+  </div>
+
+  <!-- Real-time Sound Board Mixer -->
+  <section class="remote-audio-panel" id="remote-audio-mixer-section" style="display: none;">
+    <span class="remote-audio-title">Audio Mixer Console</span>
+    <div id="remote-audio-cards-container" style="display: flex; flex-direction: column; gap: 8px;">
+      <!-- Real-time sliders loaded dynamically -->
+    </div>
+  </section>
+
+  <!-- Socket.io script -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Remote Control script -->
+  <script src="/js/remote.js"></script>
+</body>
+</html>

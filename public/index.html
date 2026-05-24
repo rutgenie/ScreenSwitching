@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScreenSwitching - Multi-Screen Media Hub</title>
+  <meta name="description" content="Fullscreen projector/TV media switches with mobile remote integrations.">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .landing-card-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      max-width: 1000px;
+      width: 100%;
+    }
+    @media (max-width: 768px) {
+      .landing-card-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .landing-wrapper {
+      text-align: center;
+      width: 100%;
+    }
+    .landing-title {
+      font-size: 2.8rem;
+      margin-bottom: 12px;
+      background: linear-gradient(135deg, #fff 30%, var(--text-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .landing-subtitle {
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+      margin-bottom: 48px;
+    }
+    .selection-card {
+      background: var(--bg-panel);
+      border: var(--glass-border);
+      border-radius: 16px;
+      padding: 32px 24px;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      transition: var(--transition-smooth);
+      box-shadow: var(--glass-shadow);
+      position: relative;
+      overflow: hidden;
+    }
+    .selection-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, var(--primary-glow), transparent);
+      opacity: 0;
+      transition: var(--transition-smooth);
+    }
+    .selection-card:hover {
+      transform: translateY(-6px);
+      border-color: var(--primary);
+      box-shadow: 0 12px 30px var(--primary-glow);
+    }
+    .selection-card:hover::before {
+      opacity: 0.2;
+    }
+    .selection-icon-holder {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.05);
+      transition: var(--transition-smooth);
+    }
+    .selection-card:hover .selection-icon-holder {
+      transform: scale(1.1);
+    }
+    .card-control .selection-icon-holder {
+      color: var(--primary);
+      box-shadow: 0 0 15px rgba(139, 92, 246, 0.1);
+    }
+    .card-display .selection-icon-holder {
+      color: var(--accent);
+      box-shadow: 0 0 15px rgba(20, 184, 166, 0.1);
+    }
+    .card-remote .selection-icon-holder {
+      color: #f472b6;
+      box-shadow: 0 0 15px rgba(244, 114, 182, 0.1);
+    }
+    .card-title {
+      font-size: 1.3rem;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+    .card-desc {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .selection-icon-holder svg {
+      width: 32px;
+      height: 32px;
+      fill: currentColor;
+    }
+  </style>
+</head>
+<body>
+  <div class="landing-wrapper">
+    <h1 class="landing-title">ScreenSwitching</h1>
+    <p class="landing-subtitle">Real-Time Presentation Switchboard & Media Controller</p>
+    
+    <div class="landing-card-grid">
+      <!-- 1. PC Control Card -->
+      <a href="/control.html" class="selection-card card-control" id="launch-control">
+        <div class="selection-icon-holder">
+          <svg viewBox="0 0 24 24">
+            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10H7v-2h10v2zm0-4H7V7h10v2zm0 8H7v-2h10v2z"/>
+          </svg>
+        </div>
+        <div class="card-title">Control Panel</div>
+        <div class="card-desc">OBS-like control panel. Manage collections, build scenes, configure media layers, and coordinate external outputs.</div>
+      </a>
+
+      <!-- 2. TV Showing Card -->
+      <a href="/display.html" class="selection-card card-display" id="launch-display">
+        <div class="selection-icon-holder">
+          <svg viewBox="0 0 24 24">
+            <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
+          </svg>
+        </div>
+        <div class="card-title">TV/Projector Output</div>
+        <div class="card-desc">The fullscreen showing display. Open on your secondary HDMI screen to receive transitions and overlays.</div>
+      </a>
+
+      <!-- 3. Smartphone Remote Card -->
+      <a href="/remote.html" class="selection-card card-remote" id="launch-remote">
+        <div class="selection-icon-holder">
+          <svg viewBox="0 0 24 24">
+            <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
+          </svg>
+        </div>
+        <div class="card-title">Mobile Remote</div>
+        <div class="card-desc">Responsive soundboard and scene switcher optimized for smartphones. Scan QR to connect instantly.</div>
+      </a>
+    </div>
+  </div>
+</body>
+</html>
