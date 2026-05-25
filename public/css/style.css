@@ -1425,3 +1425,440 @@ h1, h2, h3, h4, h5, h6 {
   height: 100%;
   object-fit: contain;
 }
+
+/* ==========================================
+   PHASE 2 WORKSPACE GLASSMORPHIC STYLING
+   ========================================== */
+
+/* 1. Unified Dropdown Actions */
+.dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-content-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  background: rgba(15, 12, 30, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  min-width: 220px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(20px);
+  z-index: 1001;
+  padding: 6px 0;
+  transform-origin: top left;
+  animation: dropdownFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.dropdown-wrapper:hover .dropdown-content-menu,
+.dropdown-content-menu.show {
+  display: block;
+}
+
+.dropdown-content-menu a {
+  color: var(--text-secondary);
+  padding: 10px 16px;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  transition: all 0.15s ease;
+}
+
+.dropdown-content-menu a:hover {
+  background: rgba(139, 92, 246, 0.15);
+  color: #fff;
+  padding-left: 20px;
+}
+
+@keyframes dropdownFadeIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 2. Playlist File List Management */
+.playlist-mgr-container {
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 12px;
+}
+
+.playlist-sort-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.playlist-sort-item {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8rem;
+  cursor: grab;
+  transition: all 0.15s ease;
+}
+
+.playlist-sort-item:active {
+  cursor: grabbing;
+}
+
+.playlist-sort-item:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.1);
+}
+
+.playlist-sort-item-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 3. Text Overlay Styling Extensions */
+.text-style-controls-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.01);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  margin-top: 12px;
+}
+
+.text-style-header {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.toggle-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.format-button-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.btn-format-toggle {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 6px;
+  color: var(--text-muted);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-format-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.btn-format-toggle.active {
+  background: rgba(20, 184, 166, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: bold;
+}
+
+/* 4. Live / Pause Preview Status Badge */
+.preview-status-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 20px;
+  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  font-weight: bold;
+  cursor: pointer;
+  z-index: 10;
+  transition: all 0.2s ease;
+}
+
+.preview-status-badge:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+.preview-status-badge .badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--error);
+}
+
+.preview-status-badge.live .badge-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.preview-status-badge.paused .badge-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+}
+
+/* 5. Master Sources Table & List Views */
+.master-sources-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 0.8rem;
+}
+
+.master-sources-table th,
+.master-sources-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.master-sources-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+  background: rgba(0,0,0,0.15);
+}
+
+.master-sources-table tr:hover {
+  background: rgba(255,255,255,0.02);
+}
+
+.source-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  display: inline-block;
+}
+
+.badge-text { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+.badge-image { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.badge-video { background: rgba(139, 92, 246, 0.15); color: #a78bfa; }
+.badge-audio { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.badge-webrtc { background: rgba(20, 184, 166, 0.15); color: #2dd4bf; }
+.badge-font { background: rgba(236, 72, 153, 0.15); color: #f472b6; }
+
+/* 6. Free Positioning Overlay Box Inside Preview */
+.free-positioning-box {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  box-shadow: 0 0 8px rgba(20, 184, 166, 0.3);
+  cursor: move;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.free-positioning-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border: 1px solid #fff;
+  border-radius: 50%;
+  bottom: -4px;
+  right: -4px;
+  cursor: se-resize;
+}
+
+/* 7. Unified Add Source Dropdown Menu */
+.add-source-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.add-source-dropdown-content {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  background: rgba(20, 18, 38, 0.95);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+  z-index: 200;
+  min-width: 190px;
+  overflow: hidden;
+  animation: dropdownFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dropdownFadeIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.add-source-dropdown-content.show {
+  display: block;
+}
+
+.add-source-dropdown-item {
+  width: 100%;
+  padding: 11px 15px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.add-source-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--accent);
+}
+
+.add-source-dropdown-item svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+/* 8. WebRTC Stream Preview Status Pills */
+.preview-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  user-select: none;
+}
+
+.preview-status-badge.live {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.preview-status-badge.live:hover {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.preview-status-badge.paused {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.preview-status-badge.paused:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* 9. Control panel drag sorting lists */
+.playlist-sort-panel {
+  margin-top: 15px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+}
+
+.playlist-sort-list {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.playlist-sort-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 11px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+
+.playlist-sort-item.dragging {
+  opacity: 0.4;
+  border: 1px dashed var(--accent);
+}
+
+.playlist-sort-item.drag-over {
+  border-top: 2px solid var(--accent);
+}
+
+.playlist-sort-item-info {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* 10. Display side playlists layers swap */
+.playlist-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.playlist-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  z-index: 1;
+}
+
+.playlist-layer.active {
+  opacity: 1;
+  z-index: 2;
+}
+

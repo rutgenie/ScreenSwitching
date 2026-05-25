@@ -43,13 +43,72 @@ let state = {
   collections: []
 };
 
-// Load State from Database
+// Load State from Database (with backward-compatible migration parser)
 function loadState() {
   try {
     if (fs.existsSync(DB_PATH)) {
       const raw = fs.readFileSync(DB_PATH, 'utf8');
       state = JSON.parse(raw);
       console.log('State successfully loaded from db.json');
+
+      // Database Auto-Migration to collection-level Master Sources
+      let migrated = false;
+      state.collections.forEach(coll => {
+        if (!coll.sources) {
+          coll.sources = [];
+          migrated = true;
+        }
+        if (!coll.fonts) {
+          coll.fonts = [];
+          migrated = true;
+        }
+
+        coll.scenes.forEach(scene => {
+          scene.sources.forEach(src => {
+            // Check if this source exists in coll.sources
+            const exists = coll.sources.some(s => s.id === src.id || (src.url && s.url === src.url) || (src.type === 'text' && s.content === src.content));
+            if (!exists) {
+              const masterSrc = {
+                id: src.sourceId || src.id || `src_${uuidv4().substring(0, 8)}`,
+                name: src.name,
+                type: src.type,
+                url: src.url || '',
+                content: src.content || '',
+                style: src.style || {
+                  color: '#ffffff',
+                  fontSize: '2rem',
+                  position: 'center',
+                  background: 'rgba(15, 12, 30, 0.65)'
+                },
+                volume: src.volume !== undefined ? src.volume : 1.0,
+                loop: src.loop !== undefined ? src.loop : (src.type === 'audio'),
+                aspectRatioMode: src.aspectRatioMode || 'crop',
+                manualLayout: src.manualLayout || { scale: 1.0, x: 0, y: 0 },
+                isPlaylist: src.isPlaylist || false,
+                playlistFiles: src.playlistFiles || [],
+                transition: src.transition || 'cut',
+                transitionDuration: src.transitionDuration || 300,
+                imageDuration: src.imageDuration || 5
+              };
+              coll.sources.push(masterSrc);
+              src.sourceId = masterSrc.id;
+              migrated = true;
+            } else if (!src.sourceId) {
+              const matched = coll.sources.find(s => s.id === src.id || (src.url && s.url === src.url) || (src.type === 'text' && s.content === src.content));
+              if (matched) {
+                src.sourceId = matched.id;
+                migrated = true;
+              }
+            }
+          });
+        });
+      });
+
+      if (migrated) {
+        console.log('Migrated legacy schema to collection-level Master Sources.');
+        saveState();
+      }
+
     } else {
       saveState(); // write defaults
     }
@@ -84,7 +143,7 @@ function getCollectionDir(collectionId) {
   return dir;
 }
 
-// Multer Setup for Dynamic Collection Storage
+// Multer Setup for Dynamic Collection Storage (supporting multiple array files)
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
     const collectionId = req.body.collectionId || state.activeCollectionId;
@@ -95,16 +154,36 @@ const storage = multer.diskStorage({
     cb(null, dir);
   },
   filename: function (req, file, cb) {
-    // Generate unique name keeping original extension
-    const ext = path.extname(file.originalname);
-    const basename = path.basename(file.originalname, ext)
-      .replace(/[^a-zA-Z0-9]/g, '_')
+    const originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const ext = path.extname(originalname);
+    const basename = path.basename(originalname, ext)
+      .replace(/[^\p{L}\p{N}\-_.]/gu, '_')
       .toLowerCase();
     cb(null, `${basename}_${Date.now()}${ext}`);
   }
 });
-
 const upload = multer({ storage: storage });
+
+// Multer Setup for custom Font uploads
+const fontStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = path.join(UPLOADS_DIR, '_fonts');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const ext = path.extname(originalname);
+    const basename = path.basename(originalname, ext)
+      .replace(/[^\p{L}\p{N}\-_.]/gu, '_')
+      .toLowerCase();
+    cb(null, `${basename}_${Date.now()}${ext}`);
+  }
+});
+const fontUpload = multer({ storage: fontStorage });
+
 
 // REST APIs
 
@@ -125,6 +204,8 @@ app.post('/api/collections', (req, res) => {
     id,
     name,
     folder: `uploads/${id}`,
+    sources: [],
+    fonts: [],
     scenes: []
   };
 
@@ -201,22 +282,7 @@ app.delete('/api/collections/:id/scenes/:sceneId', (req, res) => {
   const sceneIndex = collection.scenes.findIndex(s => s.id === sceneId);
   if (sceneIndex === -1) return res.status(404).json({ error: 'Scene not found.' });
 
-  const scene = collection.scenes[sceneIndex];
-
-  // Clean up physical files associated with sources inside this scene
-  scene.sources.forEach(src => {
-    if (src.url && src.url.startsWith('/uploads/')) {
-      const filepath = path.join(__dirname, src.url);
-      if (fs.existsSync(filepath)) {
-        try {
-          fs.unlinkSync(filepath);
-        } catch (err) {
-          console.error(`Failed to delete source file ${filepath}:`, err);
-        }
-      }
-    }
-  });
-
+  // Note: Layers removed from this scene are NOT deleted from master sources library folder!
   collection.scenes.splice(sceneIndex, 1);
 
   if (state.activeSceneId === sceneId) {
@@ -228,11 +294,9 @@ app.delete('/api/collections/:id/scenes/:sceneId', (req, res) => {
   res.json({ success: true, message: 'Scene deleted.' });
 });
 
-// 6. Upload a media source (Image, Video, Audio) to a Scene
-app.post('/api/upload', upload.single('mediaFile'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No media file provided.' });
-
-  const { collectionId, sceneId, sourceName } = req.body;
+// 6. Upload media files / playlists
+app.post('/api/upload', upload.array('mediaFiles', 50), (req, res) => {
+  const { collectionId, sceneId, sourceName, isPlaylist, transition, transitionDuration, imageDuration, aspectRatioMode, playlistQueue } = req.body;
   if (!collectionId || !sceneId) {
     return res.status(400).json({ error: 'Collection ID and Scene ID are required.' });
   }
@@ -243,119 +307,364 @@ app.post('/api/upload', upload.single('mediaFile'), (req, res) => {
   const scene = collection.scenes.find(s => s.id === sceneId);
   if (!scene) return res.status(404).json({ error: 'Scene not found.' });
 
-  // Deduce type from mimetype
+  collection.sources = collection.sources || [];
+  collection.fonts = collection.fonts || [];
+
+  // Parse queue
+  let queue = [];
+  if (playlistQueue) {
+    try {
+      queue = JSON.parse(playlistQueue);
+    } catch (e) {
+      console.error('Failed to parse playlistQueue:', e);
+    }
+  }
+
+  // Check if we have any files at all (either newly uploaded or existing in the queue)
+  const hasUploadedFiles = req.files && req.files.length > 0;
+  const hasQueue = queue.length > 0;
+
+  if (!hasUploadedFiles && !hasQueue) {
+    return res.status(400).json({ error: 'No media files provided.' });
+  }
+
+  // Resolve all files in the queue
+  let playlistFiles = [];
+  if (hasQueue) {
+    playlistFiles = queue.map(item => {
+      if (item.url) {
+        // Reuse already uploaded file
+        return {
+          name: item.name,
+          url: item.url
+        };
+      } else if (hasUploadedFiles && item.originalIndex !== undefined) {
+        const file = req.files[item.originalIndex];
+        if (file) {
+          return {
+            name: file.originalname,
+            url: `/uploads/${collectionId}/${file.filename}`
+          };
+        }
+      }
+      return null;
+    }).filter(Boolean);
+  } else if (hasUploadedFiles) {
+    // Fallback if no queue was sent
+    playlistFiles = req.files.map(file => ({
+      name: file.originalname,
+      url: `/uploads/${collectionId}/${file.filename}`
+    }));
+  }
+
+  if (playlistFiles.length === 0) {
+    return res.status(400).json({ error: 'No valid media files resolved.' });
+  }
+
+  // Determine type (from the first resolved file)
+  const firstResolved = playlistFiles[0];
+  const ext = path.extname(firstResolved.name).toLowerCase();
   let type = 'image';
-  if (req.file.mimetype.startsWith('video/')) {
+  if (['.mp4', '.webm', '.ogg', '.mov'].includes(ext)) {
     type = 'video';
-  } else if (req.file.mimetype.startsWith('audio/')) {
+  } else if (['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac'].includes(ext)) {
     type = 'audio';
   }
 
-  const sourceId = `src_${uuidv4().substring(0, 8)}`;
-  const relativeUrl = `/uploads/${collectionId}/${req.file.filename}`;
+  const masterSourceId = `src_${uuidv4().substring(0, 8)}`;
+  let masterSource = null;
+  const makePlaylistVal = isPlaylist === 'true' || isPlaylist === true;
 
-  const newSource = {
-    id: sourceId,
-    name: sourceName || req.file.originalname,
-    type: type,
-    url: relativeUrl,
-    visible: true
-  };
+  if (makePlaylistVal) {
+    masterSource = {
+      id: masterSourceId,
+      name: sourceName || `${type} playlist 1`,
+      type: type,
+      isPlaylist: true,
+      playlistFiles: playlistFiles,
+      aspectRatioMode: aspectRatioMode || 'crop',
+      transition: transition || 'cut',
+      transitionDuration: parseInt(transitionDuration) || 300,
+      imageDuration: parseInt(imageDuration) || 5,
+      visible: true
+    };
 
-  // Add initial player configurations
-  if (type === 'video' || type === 'audio') {
-    newSource.volume = 1.0;
-    newSource.loop = (type === 'audio'); // Audio loops by default, video plays once
+    if (type === 'video' || type === 'audio') {
+      masterSource.volume = 1.0;
+      masterSource.loop = (type === 'audio');
+    }
+  } else {
+    // Single file
+    masterSource = {
+      id: masterSourceId,
+      name: sourceName || firstResolved.name,
+      type: type,
+      url: firstResolved.url,
+      visible: true,
+      aspectRatioMode: aspectRatioMode || 'crop',
+      manualLayout: { scale: 1.0, x: 0, y: 0 }
+    };
+
+    if (type === 'video' || type === 'audio') {
+      masterSource.volume = 1.0;
+      masterSource.loop = (type === 'audio');
+    }
   }
 
-  scene.sources.push(newSource);
+  collection.sources.push(masterSource);
+
+  // Create scene-level layer
+  const layerId = `layer_${uuidv4().substring(0, 8)}`;
+  const newLayer = {
+    id: layerId,
+    sourceId: masterSource.id,
+    name: masterSource.name,
+    type: masterSource.type,
+    visible: true,
+    url: masterSource.url || '',
+    isPlaylist: masterSource.isPlaylist || false,
+    playlistFiles: masterSource.playlistFiles || [],
+    aspectRatioMode: masterSource.aspectRatioMode || 'crop',
+    manualLayout: masterSource.manualLayout || { scale: 1.0, x: 0, y: 0 },
+    transition: masterSource.transition || 'cut',
+    transitionDuration: masterSource.transitionDuration || 300,
+    imageDuration: masterSource.imageDuration || 5
+  };
+
+  if (type === 'video' || type === 'audio') {
+    newLayer.volume = masterSource.volume || 1.0;
+    newLayer.loop = masterSource.loop || false;
+  }
+
+  scene.sources.push(newLayer);
   saveState();
 
   io.emit('state-updated', state);
-  res.status(201).json(newSource);
+  res.status(201).json(newLayer);
 });
 
-// 6.5. Add an existing collection asset source to a scene
+// 6.2. Add a Custom Typography Font file to the library
+app.post('/api/collections/:id/fonts', fontUpload.single('fontFile'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No font file provided.' });
+  const { id } = req.params;
+  const { fontName } = req.body;
+  if (!fontName) return res.status(400).json({ error: 'Font name is required.' });
+
+  const collection = state.collections.find(c => c.id === id);
+  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
+
+  collection.fonts = collection.fonts || [];
+
+  const fontId = `font_${uuidv4().substring(0, 8)}`;
+  const relativeUrl = `/uploads/_fonts/${req.file.filename}`;
+
+  const newFont = {
+    id: fontId,
+    name: fontName,
+    url: relativeUrl,
+    filename: req.file.filename
+  };
+
+  collection.fonts.push(newFont);
+
+  // Write to master source list so it populates in "Manage Sources"
+  collection.sources = collection.sources || [];
+  collection.sources.push({
+    id: fontId,
+    name: fontName,
+    type: 'font',
+    url: relativeUrl,
+    visible: true
+  });
+
+  saveState();
+  io.emit('state-updated', state);
+  res.status(201).json(newFont);
+});
+
+// 6.4. Get all Master sources in a collection library
+app.get('/api/collections/:id/sources', (req, res) => {
+  const { id } = req.params;
+  const collection = state.collections.find(c => c.id === id);
+  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
+  res.json(collection.sources || []);
+});
+
+// 6.5. Add an existing collection asset source as a scene layer
+app.post('/api/collections/:id/scenes/:sceneId/layers', (req, res) => {
+  const { id, sceneId } = req.params;
+  const { sourceId, name } = req.body;
+  if (!sourceId) return res.status(400).json({ error: 'Source ID is required.' });
+
+  const collection = state.collections.find(c => c.id === id);
+  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
+
+  const scene = collection.scenes.find(s => s.id === sceneId);
+  if (!scene) return res.status(404).json({ error: 'Scene not found.' });
+
+  const master = collection.sources.find(s => s.id === sourceId);
+  if (!master) return res.status(404).json({ error: 'Master source not found.' });
+
+  const layerId = `layer_${uuidv4().substring(0, 8)}`;
+  const newLayer = {
+    id: layerId,
+    sourceId: master.id,
+    name: name || master.name,
+    type: master.type,
+    visible: true,
+    url: master.url || '',
+    isPlaylist: master.isPlaylist || false,
+    playlistFiles: master.playlistFiles || [],
+    aspectRatioMode: master.aspectRatioMode || 'crop',
+    manualLayout: master.manualLayout || { scale: 1.0, x: 0, y: 0 },
+    transition: master.transition || 'cut',
+    transitionDuration: master.transitionDuration || 300,
+    imageDuration: master.imageDuration || 5
+  };
+
+  if (master.type === 'video' || master.type === 'audio') {
+    newLayer.volume = master.volume !== undefined ? master.volume : 1.0;
+    newLayer.loop = master.loop !== undefined ? master.loop : false;
+  }
+
+  if (master.type === 'text') {
+    newLayer.content = master.content;
+    newLayer.style = master.style;
+  }
+
+  scene.sources.push(newLayer);
+  saveState();
+
+  io.emit('state-updated', state);
+  res.status(201).json(newLayer);
+});
+
+// Fallback compatibility endpoint for old control UI files
 app.post('/api/collections/:id/scenes/:sceneId/sources/existing', (req, res) => {
   const { id, sceneId } = req.params;
-  const { name, filename, type } = req.body;
+  const { filename, name, type } = req.body;
   if (!filename || !type) return res.status(400).json({ error: 'Filename and Type are required.' });
 
   const collection = state.collections.find(c => c.id === id);
   if (!collection) return res.status(404).json({ error: 'Collection not found.' });
 
-  const scene = collection.scenes.find(s => s.id === sceneId);
-  if (!scene) return res.status(404).json({ error: 'Scene not found.' });
+  collection.sources = collection.sources || [];
+  let master = collection.sources.find(s => s.url === `/uploads/${id}/${filename}`);
+  
+  if (!master) {
+    const masterId = `src_${uuidv4().substring(0, 8)}`;
+    master = {
+      id: masterId,
+      name: name || filename,
+      type: type,
+      url: `/uploads/${id}/${filename}`,
+      visible: true,
+      aspectRatioMode: 'crop',
+      manualLayout: { scale: 1.0, x: 0, y: 0 }
+    };
+    collection.sources.push(master);
+  }
 
-  const sourceId = `src_${uuidv4().substring(0, 8)}`;
-  const relativeUrl = `/uploads/${id}/${filename}`;
-
-  const newSource = {
-    id: sourceId,
-    name: name || filename,
-    type: type,
-    url: relativeUrl,
+  const layerId = `layer_${uuidv4().substring(0, 8)}`;
+  const newLayer = {
+    id: layerId,
+    sourceId: master.id,
+    name: name || master.name,
+    type: master.type,
+    url: master.url,
     visible: true,
     aspectRatioMode: 'crop',
     manualLayout: { scale: 1.0, x: 0, y: 0 }
   };
 
   if (type === 'video' || type === 'audio') {
-    newSource.volume = 1.0;
-    newSource.loop = (type === 'audio');
+    newLayer.volume = 1.0;
+    newLayer.loop = (type === 'audio');
   }
 
-  scene.sources.push(newSource);
-  saveState();
-
-  io.emit('state-updated', state);
-  res.status(201).json(newSource);
-});
-
-// 6.7. Add a WebRTC stream source to a scene
-app.post('/api/collections/:id/scenes/:sceneId/sources/webrtc', (req, res) => {
-  const { id, sceneId } = req.params;
-  const { name } = req.body;
-
-  const collection = state.collections.find(c => c.id === id);
-  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
-
   const scene = collection.scenes.find(s => s.id === sceneId);
-  if (!scene) return res.status(404).json({ error: 'Scene not found.' });
-
-  const sourceId = `src_${uuidv4().substring(0, 8)}`;
-
-  const newSource = {
-    id: sourceId,
-    name: name || 'Application Window Stream',
-    type: 'webrtc',
-    visible: true,
-    aspectRatioMode: 'crop',
-    manualLayout: { scale: 1.0, x: 0, y: 0 }
-  };
-
-  scene.sources.push(newSource);
+  if (scene) scene.sources.push(newLayer);
+  
   saveState();
-
   io.emit('state-updated', state);
-  res.status(201).json(newSource);
+  res.status(201).json(newLayer);
 });
 
-// 7. Add a text source overlay to a scene
-app.post('/api/collections/:id/scenes/:sceneId/sources/text', (req, res) => {
-  const { id, sceneId } = req.params;
-  const { name, content, style } = req.body;
+// 6.6. Create a library Master Text overlay source
+app.post('/api/collections/:id/sources/text', (req, res) => {
+  const { id } = req.params;
+  const { name, content, style, sceneId } = req.body;
   if (!content) return res.status(400).json({ error: 'Text content is required.' });
 
   const collection = state.collections.find(c => c.id === id);
   if (!collection) return res.status(404).json({ error: 'Collection not found.' });
 
-  const scene = collection.scenes.find(s => s.id === sceneId);
-  if (!scene) return res.status(404).json({ error: 'Scene not found.' });
+  collection.sources = collection.sources || [];
 
-  const sourceId = `src_${uuidv4().substring(0, 8)}`;
-  const newSource = {
-    id: sourceId,
+  const masterSourceId = `src_${uuidv4().substring(0, 8)}`;
+  const masterSource = {
+    id: masterSourceId,
+    name: name || 'Text Overlay',
+    type: 'text',
+    content: content,
+    style: style || {
+      color: '#ffffff',
+      fontSize: '3rem',
+      position: 'center',
+      background: 'rgba(15,12,30,0.65)',
+      showBackground: true,
+      bgPadding: 15,
+      bgOpacity: 0.65,
+      showShadow: true,
+      shadowColor: '#000000',
+      shadowBlur: 5,
+      shadowDistance: 3,
+      shadowAngle: 45,
+      shadowOpacity: 0.6,
+      fontFamily: 'Open Sans',
+      bold: false,
+      italic: false,
+      underline: false
+    },
+    visible: true
+  };
+
+  collection.sources.push(masterSource);
+
+  // If a scene ID was passed, also add it as an active layer in that scene
+  if (sceneId) {
+    const scene = collection.scenes.find(s => s.id === sceneId);
+    if (scene) {
+      const layerId = `layer_${uuidv4().substring(0, 8)}`;
+      scene.sources.push({
+        id: layerId,
+        sourceId: masterSource.id,
+        name: masterSource.name,
+        type: 'text',
+        content: masterSource.content,
+        style: masterSource.style,
+        visible: true
+      });
+    }
+  }
+
+  saveState();
+  io.emit('state-updated', state);
+  res.status(201).json(masterSource);
+});
+
+// Old text route redirect for compatibility
+app.post('/api/collections/:id/scenes/:sceneId/sources/text', (req, res) => {
+  const { id, sceneId } = req.params;
+  const { name, content, style } = req.body;
+  
+  const collection = state.collections.find(c => c.id === id);
+  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
+  
+  collection.sources = collection.sources || [];
+  const masterSourceId = `src_${uuidv4().substring(0, 8)}`;
+  const masterSource = {
+    id: masterSourceId,
     name: name || 'Text Overlay',
     type: 'text',
     content: content,
@@ -363,19 +672,247 @@ app.post('/api/collections/:id/scenes/:sceneId/sources/text', (req, res) => {
       color: '#ffffff',
       fontSize: '2rem',
       position: 'center',
-      background: 'rgba(0,0,0,0.5)'
+      background: 'rgba(15,12,30,0.65)'
     },
     visible: true
   };
+  collection.sources.push(masterSource);
 
-  scene.sources.push(newSource);
+  const scene = collection.scenes.find(s => s.id === sceneId);
+  const layerId = `layer_${uuidv4().substring(0, 8)}`;
+  const newLayer = {
+    id: layerId,
+    sourceId: masterSource.id,
+    name: masterSource.name,
+    type: 'text',
+    content: masterSource.content,
+    style: masterSource.style,
+    visible: true
+  };
+  if (scene) scene.sources.push(newLayer);
+
   saveState();
-
   io.emit('state-updated', state);
-  res.status(201).json(newSource);
+  res.status(201).json(newLayer);
 });
 
-// 8. Delete a source
+// 6.7. Create a library Master WebRTC screen share stream source
+app.post('/api/collections/:id/sources/webrtc', (req, res) => {
+  const { id } = req.params;
+  const { name, sceneId } = req.body;
+
+  const collection = state.collections.find(c => c.id === id);
+  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
+
+  collection.sources = collection.sources || [];
+
+  const masterSourceId = `src_${uuidv4().substring(0, 8)}`;
+  const masterSource = {
+    id: masterSourceId,
+    name: name || 'Application Window Stream',
+    type: 'webrtc',
+    visible: true,
+    aspectRatioMode: 'crop',
+    manualLayout: { scale: 1.0, x: 0, y: 0 }
+  };
+
+  collection.sources.push(masterSource);
+
+  if (sceneId) {
+    const scene = collection.scenes.find(s => s.id === sceneId);
+    if (scene) {
+      const layerId = `layer_${uuidv4().substring(0, 8)}`;
+      scene.sources.push({
+        id: layerId,
+        sourceId: masterSource.id,
+        name: masterSource.name,
+        type: 'webrtc',
+        visible: true,
+        aspectRatioMode: 'crop',
+        manualLayout: { scale: 1.0, x: 0, y: 0 }
+      });
+    }
+  }
+
+  saveState();
+  io.emit('state-updated', state);
+  res.status(201).json(masterSource);
+});
+
+// Old WebRTC endpoint redirect
+app.post('/api/collections/:id/scenes/:sceneId/sources/webrtc', (req, res) => {
+  const { id, sceneId } = req.params;
+  const { name } = req.body;
+
+  const collection = state.collections.find(c => c.id === id);
+  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
+
+  collection.sources = collection.sources || [];
+  const masterSourceId = `src_${uuidv4().substring(0, 8)}`;
+  const masterSource = {
+    id: masterSourceId,
+    name: name || 'Application Window Stream',
+    type: 'webrtc',
+    visible: true,
+    aspectRatioMode: 'crop',
+    manualLayout: { scale: 1.0, x: 0, y: 0 }
+  };
+  collection.sources.push(masterSource);
+
+  const scene = collection.scenes.find(s => s.id === sceneId);
+  const layerId = `layer_${uuidv4().substring(0, 8)}`;
+  const newLayer = {
+    id: layerId,
+    sourceId: masterSource.id,
+    name: masterSource.name,
+    type: 'webrtc',
+    visible: true,
+    aspectRatioMode: 'crop',
+    manualLayout: { scale: 1.0, x: 0, y: 0 }
+  };
+  if (scene) scene.sources.push(newLayer);
+
+  saveState();
+  io.emit('state-updated', state);
+  res.status(201).json(newLayer);
+});
+
+// 6.8. Update a library Master Source configurations (e.g. updating playlists, names)
+app.put('/api/collections/:id/sources/:sourceId', upload.array('mediaFiles', 50), (req, res) => {
+  const { id, sourceId } = req.params;
+  const { name, transition, transitionDuration, imageDuration, aspectRatioMode, existingFiles } = req.body;
+
+  const collection = state.collections.find(c => c.id === id);
+  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
+
+  const master = collection.sources.find(s => s.id === sourceId);
+  if (!master) return res.status(404).json({ error: 'Library Source not found.' });
+
+  if (name) master.name = name;
+  if (aspectRatioMode) master.aspectRatioMode = aspectRatioMode;
+  if (transition) master.transition = transition;
+  if (transitionDuration !== undefined) master.transitionDuration = parseInt(transitionDuration) || 300;
+  if (imageDuration !== undefined) master.imageDuration = parseInt(imageDuration) || 5;
+
+  if (master.isPlaylist) {
+    let files = [];
+    if (existingFiles) {
+      try {
+        files = JSON.parse(existingFiles);
+      } catch (err) {
+        console.error("Failed to parse existing playlist files:", err);
+      }
+    }
+
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(f => {
+        files.push({
+          name: f.originalname,
+          url: `/uploads/${id}/${f.filename}`
+        });
+      });
+    }
+
+    master.playlistFiles = files;
+  }
+
+  // Synchronize master changes to all active scenes containing layers referencing this sourceId
+  collection.scenes.forEach(scene => {
+    scene.sources.forEach(src => {
+      if (src.sourceId === sourceId) {
+        src.name = master.name;
+        src.aspectRatioMode = master.aspectRatioMode;
+        if (master.isPlaylist) {
+          src.playlistFiles = master.playlistFiles;
+          src.transition = master.transition;
+          src.transitionDuration = master.transitionDuration;
+          src.imageDuration = master.imageDuration;
+        }
+      }
+    });
+  });
+
+  saveState();
+  io.emit('state-updated', state);
+  res.json(master);
+});
+
+// 6.9. Permanently delete a Master Source with Dependency Warnings
+app.delete('/api/collections/:id/sources/:sourceId', (req, res) => {
+  const { id, sourceId } = req.params;
+  const force = req.query.force === 'true';
+
+  const collection = state.collections.find(c => c.id === id);
+  if (!collection) return res.status(404).json({ error: 'Collection not found.' });
+
+  // 1. Scan scenes for references
+  const affectedScenes = [];
+  collection.scenes.forEach(scene => {
+    const hasLayer = scene.sources.some(src => src.sourceId === sourceId || src.id === sourceId);
+    if (hasLayer) {
+      affectedScenes.push(scene.name);
+    }
+  });
+
+  // 2. Fail if dependency exists and not forced
+  if (affectedScenes.length > 0 && !force) {
+    return res.json({
+      success: false,
+      requiresConfirmation: true,
+      affectedScenes: affectedScenes,
+      message: `Deleting this source will affect ${affectedScenes.length} scenes: ${affectedScenes.join(', ')}.`
+    });
+  }
+
+  // 3. Purge master source
+  const sourceIndex = collection.sources.findIndex(s => s.id === sourceId);
+  let masterSource = null;
+  if (sourceIndex !== -1) {
+    masterSource = collection.sources[sourceIndex];
+    collection.sources.splice(sourceIndex, 1);
+  }
+
+  // 4. Remove all referencing layers from scenes
+  collection.scenes.forEach(scene => {
+    scene.sources = scene.sources.filter(src => src.sourceId !== sourceId && src.id !== sourceId);
+  });
+
+  // 5. Delete physical files
+  if (masterSource) {
+    if (masterSource.isPlaylist && masterSource.playlistFiles) {
+      masterSource.playlistFiles.forEach(pf => {
+        const filepath = path.join(__dirname, pf.url);
+        if (fs.existsSync(filepath)) {
+          try { fs.unlinkSync(filepath); } catch (e) { console.error(e); }
+        }
+      });
+    } else if (masterSource.url) {
+      const filepath = path.join(__dirname, masterSource.url);
+      if (fs.existsSync(filepath)) {
+        try { fs.unlinkSync(filepath); } catch (e) { console.error(e); }
+      }
+    }
+  }
+
+  // Also remove custom fonts if matched
+  if (collection.fonts) {
+    const fontIdx = collection.fonts.findIndex(f => f.id === sourceId);
+    if (fontIdx !== -1) {
+      const font = collection.fonts[fontIdx];
+      const filepath = path.join(__dirname, font.url);
+      if (fs.existsSync(filepath)) {
+        try { fs.unlinkSync(filepath); } catch (e) { console.error(e); }
+      }
+      collection.fonts.splice(fontIdx, 1);
+    }
+  }
+
+  saveState();
+  io.emit('state-updated', state);
+  res.json({ success: true, message: 'Source assets completely purged.' });
+});
+
+// 8. Delete a scene layer (retains master library source and physical files!)
 app.delete('/api/collections/:id/scenes/:sceneId/sources/:sourceId', (req, res) => {
   const { id, sceneId, sourceId } = req.params;
   const collection = state.collections.find(c => c.id === id);
@@ -385,43 +922,30 @@ app.delete('/api/collections/:id/scenes/:sceneId/sources/:sourceId', (req, res) 
   if (!scene) return res.status(404).json({ error: 'Scene not found.' });
 
   const sourceIndex = scene.sources.findIndex(src => src.id === sourceId);
-  if (sourceIndex === -1) return res.status(404).json({ error: 'Source not found.' });
+  if (sourceIndex === -1) return res.status(404).json({ error: 'Source layer not found.' });
 
-  const source = scene.sources[sourceIndex];
-
-  // Physically delete media file
-  if (source.url && source.url.startsWith('/uploads/')) {
-    const filepath = path.join(__dirname, source.url);
-    if (fs.existsSync(filepath)) {
-      try {
-        fs.unlinkSync(filepath);
-      } catch (err) {
-        console.error(`Failed to delete source file ${filepath}:`, err);
-      }
-    }
-  }
-
+  // Only splice from scene sources, DO NOT unlink from uploads folder!
   scene.sources.splice(sourceIndex, 1);
   saveState();
 
   io.emit('state-updated', state);
-  res.json({ success: true, message: 'Source deleted.' });
+  res.json({ success: true, message: 'Scene layer removed.' });
 });
 
-// 9. Get uploaded files in a collection
+// 9. Get uploaded files in a collection folder
 app.get('/api/collections/:id/files', (req, res) => {
   const { id } = req.params;
   const dir = path.join(UPLOADS_DIR, id);
   if (!fs.existsSync(dir)) {
     return res.json([]);
   }
-  
+
   try {
     const filenames = fs.readdirSync(dir);
     const files = filenames.map(name => {
       const filePath = path.join(dir, name);
       const stats = fs.statSync(filePath);
-      
+
       const ext = path.extname(name).toLowerCase();
       let type = 'other';
       if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg'].includes(ext)) {
@@ -431,7 +955,7 @@ app.get('/api/collections/:id/files', (req, res) => {
       } else if (['.mp3', '.wav', '.ogg', '.m4a'].includes(ext)) {
         type = 'audio';
       }
-      
+
       return {
         name,
         url: `/uploads/${id}/${name}`,
@@ -468,6 +992,26 @@ app.post('/api/collections/:id/duplicate', (req, res) => {
     }
   }
 
+  const duplicatedSources = (srcCollection.sources || []).map(s => {
+    let newUrl = s.url;
+    if (s.url && s.url.startsWith(`/uploads/${id}/`)) {
+      newUrl = s.url.replace(`/uploads/${id}/`, `/uploads/${newId}/`);
+    }
+    
+    let playFiles = s.playlistFiles || [];
+    if (s.isPlaylist) {
+      playFiles = playFiles.map(f => {
+        let fUrl = f.url;
+        if (f.url && f.url.startsWith(`/uploads/${id}/`)) {
+          fUrl = f.url.replace(`/uploads/${id}/`, `/uploads/${newId}/`);
+        }
+        return { ...f, url: fUrl };
+      });
+    }
+
+    return { ...s, url: newUrl, playlistFiles: playFiles };
+  });
+
   // Helper recursive mapping function to clone scenes and sources with fresh IDs
   const duplicatedScenes = srcCollection.scenes.map(oldScene => {
     const newSceneId = `scene_${uuidv4().substring(0, 8)}`;
@@ -478,9 +1022,20 @@ app.post('/api/collections/:id/duplicate', (req, res) => {
         newUrl = oldSrc.url.replace(`/uploads/${id}/`, `/uploads/${newId}/`);
       }
       
-      return { ...oldSrc, id: newSrcId, url: newUrl };
+      let playFiles = oldSrc.playlistFiles || [];
+      if (oldSrc.isPlaylist) {
+        playFiles = playFiles.map(f => {
+          let fUrl = f.url;
+          if (f.url && f.url.startsWith(`/uploads/${id}/`)) {
+            fUrl = f.url.replace(`/uploads/${id}/`, `/uploads/${newId}/`);
+          }
+          return { ...f, url: fUrl };
+        });
+      }
+
+      return { ...oldSrc, id: newSrcId, url: newUrl, playlistFiles: playFiles };
     });
-    
+
     return {
       id: newSceneId,
       name: oldScene.name,
@@ -492,6 +1047,8 @@ app.post('/api/collections/:id/duplicate', (req, res) => {
     id: newId,
     name: `${srcCollection.name} (Copy)`,
     folder: `uploads/${newId}`,
+    sources: duplicatedSources,
+    fonts: srcCollection.fonts || [],
     scenes: duplicatedScenes
   };
 
@@ -528,7 +1085,7 @@ app.post('/api/collections/:id/scenes/:sceneId/duplicate', (req, res) => {
   if (!srcScene) return res.status(404).json({ error: 'Scene not found.' });
 
   const newSceneId = `scene_${uuidv4().substring(0, 8)}`;
-  
+
   const duplicatedSources = srcScene.sources.map(oldSrc => {
     const newSrcId = `src_${uuidv4().substring(0, 8)}`;
     return { ...oldSrc, id: newSrcId };
@@ -705,19 +1262,29 @@ io.on('connection', (socket) => {
     console.log(`Switched active scene to ID: ${sceneId}`);
   });
 
-  // Real-time source control (Volume, Loop, Visible toggle)
+  // Real-time source control (Volume, Loop, Visible toggle, nested style, and positioning)
   socket.on('control-source', (data) => {
-    // data: { collectionId, sceneId, sourceId, property, value }
     const { collectionId, sceneId, sourceId, property, value } = data;
 
-    // Mutate state directly
     const collection = state.collections.find(c => c.id === collectionId);
     if (collection) {
       const scene = collection.scenes.find(s => s.id === sceneId);
       if (scene) {
         const source = scene.sources.find(src => src.id === sourceId);
         if (source) {
-          source[property] = value;
+          // Dynamic nested assignment helpers
+          if (property.startsWith('style.')) {
+            const styleProp = property.split('.')[1];
+            source.style = source.style || {};
+            source.style[styleProp] = value;
+          } else if (property.startsWith('manualLayout.')) {
+            const layoutProp = property.split('.')[1];
+            source.manualLayout = source.manualLayout || { scale: 1.0, x: 0, y: 0 };
+            source.manualLayout[layoutProp] = value;
+          } else {
+            source[property] = value;
+          }
+          
           saveState();
 
           // Broadcast delta change to other screens
@@ -728,7 +1295,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Real-time text content updates (Typewriter dynamic edit)
+  // Real-time text content updates
   socket.on('update-text-content', (data) => {
     const { collectionId, sceneId, sourceId, content } = data;
     const collection = state.collections.find(c => c.id === collectionId);
@@ -747,7 +1314,6 @@ io.on('connection', (socket) => {
 
   // Report Display Window Screen status
   socket.on('display-status', (data) => {
-    // data: { active, width, height, fullscreen }
     displayStatus = { ...displayStatus, ...data };
     io.emit('display-status-updated', displayStatus);
     console.log('Showing screen status updated:', displayStatus);
@@ -758,7 +1324,6 @@ io.on('connection', (socket) => {
     clients.delete(socket);
     console.log(`WebSocket client disconnected (ID: ${socket.id})`);
     if (socket.role === 'display') {
-      // Check if any other display client remains
       let displayExists = false;
       for (let s of io.sockets.sockets.values()) {
         if (s.role === 'display') displayExists = true;
@@ -800,7 +1365,6 @@ server.listen(PORT, () => {
     console.log('\n📱 Smartphone Remote Control URL:');
     console.log(`👉 ${remoteUrl}`);
 
-    // Print ASCII QR Code in terminal if available
     if (qrcodeTerminal) {
       console.log('\nScan this QR code with your phone to remote control:');
       qrcodeTerminal.generate(remoteUrl, { small: true });
