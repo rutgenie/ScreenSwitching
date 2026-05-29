@@ -7,6 +7,7 @@ let currentDisplayStatus = null;
 let selectedFile = null;
 let selectedFiles = [];
 let playlistFileItems = [];
+let pendingOverwrites = [];
 let activeTextPosition = 'center';
 let selectedLibraryFile = null;
 
@@ -54,6 +55,22 @@ const elUploadProgressRow = document.getElementById('upload-progress-row');
 const elProgressBarFill = document.getElementById('progress-bar-fill');
 const elProgressPercentage = document.getElementById('progress-percentage');
 const elBtnUploadSubmit = document.getElementById('btn-upload-submit');
+
+// Helper to sanitize filenames on the frontend to match Multer's custom backend behavior
+const getSanitizedFilename = (name) => {
+  if (!name) return '';
+  const idx = name.lastIndexOf('.');
+  const ext = idx !== -1 ? name.substring(idx) : '';
+  const base = idx !== -1 ? name.substring(0, idx) : name;
+  
+  let sanitizedBase = base.normalize('NFC');
+  try {
+    sanitizedBase = sanitizedBase.replace(/[^\p{L}\p{N}\-_.]/gu, '_');
+  } catch (e) {
+    sanitizedBase = sanitizedBase.replace(/[^a-zA-Z0-9\-_.]/g, '_');
+  }
+  return (sanitizedBase + ext).toLowerCase();
+};
 
 // ==========================================
 // 1. WEB SOCKETS SETUP & REAL-TIME STATE SYNC
@@ -190,20 +207,53 @@ function getActiveCollection() {
   return currentDbState.collections.find(c => c.id === currentDbState.activeCollectionId);
 }
 
+function synchronizeCustomFonts(collection) {
+  if (!collection || !collection.fonts) return;
+  
+  let styleNode = document.getElementById('custom-fonts-style-block');
+  if (!styleNode) {
+    styleNode = document.createElement('style');
+    styleNode.id = 'custom-fonts-style-block';
+    document.head.appendChild(styleNode);
+  }
+  
+  let cssRules = '';
+  collection.fonts.forEach(font => {
+    cssRules += `
+      @font-face {
+        font-family: '${font.name}';
+        src: url('/uploads/_fonts/${font.filename}');
+      }
+    `;
+  });
+  styleNode.innerHTML = cssRules;
+  console.log("Synchronized custom fonts:", collection.fonts.map(f => f.name));
+}
+
 function renderAll() {
+  const activeColl = getActiveCollection();
+  if (activeColl) {
+    synchronizeCustomFonts(activeColl);
+  }
+  
   renderCollectionsList();
   renderScenesList();
   renderSourcesList();
   renderPreviewCanvas();
+  
+  const manageModal = document.getElementById('modal-manage-sources');
+  if (manageModal && manageModal.classList.contains('active')) {
+    loadManageSourcesTable();
+  }
 }
 
 // Render left column Event Collections
 function renderCollectionsList() {
   elCollectionList.innerHTML = '';
   if (!currentDbState || currentDbState.collections.length === 0) {
-    elCollectionList.innerHTML = '<li style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:12px;">No collections created</li>';
-    elActiveCollectionTitle.textContent = 'Select or Create a Collection';
-    elBtnDeleteCollection.style.display = 'none';
+    elCollectionList.innerHTML = '<li style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:12px;">No events created</li>';
+    elActiveCollectionTitle.textContent = 'Select or Create an Event';
+    if (elBtnDeleteCollection) elBtnDeleteCollection.style.display = 'none';
     return;
   }
 
@@ -282,7 +332,7 @@ function renderCollectionsList() {
     
     if (isActive) {
       elActiveCollectionTitle.textContent = coll.name;
-      elBtnDeleteCollection.style.display = 'inline-flex';
+      if (elBtnDeleteCollection) elBtnDeleteCollection.style.display = 'inline-flex';
     }
   });
 }
@@ -293,7 +343,7 @@ function renderScenesList() {
   const activeColl = getActiveCollection();
   
   if (!activeColl) {
-    elSceneList.innerHTML = '<li style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:12px;">Select a collection first</li>';
+    elSceneList.innerHTML = '<li style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:12px;">Select an event first</li>';
     return;
   }
   
@@ -694,6 +744,10 @@ function renderSourcesList() {
         <div class="form-group" style="margin-bottom: 8px;">
           <label style="font-size: 0.75rem; color: var(--text-secondary);">Font Family</label>
           <div id="font-select-container-${src.id}"></div>
+          <div class="font-upload-shortcut-row" style="display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font-size: 0.72rem; color: var(--text-secondary);">
+            <span>Add your font</span>
+            <button type="button" class="btn-secondary" style="padding: 2px 8px; font-size: 0.7rem; border-radius: 4px; height: auto;" onclick="openModal('modal-upload-font')">Upload Font</button>
+          </div>
         </div>
         
         <div class="form-group" style="margin-bottom: 8px;">
@@ -1220,10 +1274,12 @@ formCreateCollection.onsubmit = async (e) => {
 };
 
 // Delete Active Collection
-elBtnDeleteCollection.onclick = () => {
-  if (!currentDbState || !currentDbState.activeCollectionId) return;
-  deleteCollectionPrompt(currentDbState.activeCollectionId);
-};
+if (elBtnDeleteCollection) {
+  elBtnDeleteCollection.onclick = () => {
+    if (!currentDbState || !currentDbState.activeCollectionId) return;
+    deleteCollectionPrompt(currentDbState.activeCollectionId);
+  };
+}
 
 // Create Scene
 formCreateScene.onsubmit = async (e) => {
@@ -1259,23 +1315,46 @@ formUploadMedia.onsubmit = async (e) => {
   
   const sourceName = document.getElementById('media-file-name').value.trim();
   const isPlaylist = document.getElementById('chk-make-playlist').checked;
-  
+
   // Find all existing files in the collection to reuse them
   const findExistingFile = (filename) => {
     if (!activeColl || !activeColl.sources) return null;
+    const targetSanitized = getSanitizedFilename(filename);
+    if (!targetSanitized) return null;
+
+    const checkUrlOrName = (name, url) => {
+      if (name && getSanitizedFilename(name) === targetSanitized) {
+        return true;
+      }
+      if (url) {
+        const decodedUrl = decodeURIComponent(url);
+        const urlFile = decodedUrl.substring(decodedUrl.lastIndexOf('/') + 1);
+        const extIdx = urlFile.lastIndexOf('.');
+        const ext = extIdx !== -1 ? urlFile.substring(extIdx) : '';
+        const baseWithTimestamp = extIdx !== -1 ? urlFile.substring(0, extIdx) : urlFile;
+        const lastUnderscore = baseWithTimestamp.lastIndexOf('_');
+        
+        let recovered = '';
+        if (lastUnderscore !== -1) {
+          const base = baseWithTimestamp.substring(0, lastUnderscore);
+          recovered = base + ext;
+        } else {
+          recovered = urlFile;
+        }
+        if (recovered.toLowerCase() === targetSanitized) {
+          return true;
+        }
+      }
+      return false;
+    };
+
     for (const src of activeColl.sources) {
       if (src.isPlaylist && src.playlistFiles) {
-        const found = src.playlistFiles.find(f => f.name === filename);
-        if (found) return found;
-      } else if (src.name === filename) {
-        return { name: src.name, url: src.url };
-      } else if (src.url) {
-        const urlFile = src.url.substring(src.url.lastIndexOf('/') + 1);
-        const originalBase = urlFile.substring(0, urlFile.lastIndexOf('_'));
-        const originalExt = urlFile.substring(urlFile.lastIndexOf('.'));
-        const originalNameRecovered = originalBase + originalExt;
-        if (urlFile === filename || originalNameRecovered === filename) {
-          return { name: filename, url: src.url };
+        const found = src.playlistFiles.find(f => checkUrlOrName(f.name, f.url));
+        if (found) return { name: found.name, url: found.url };
+      } else {
+        if (checkUrlOrName(src.name, src.url)) {
+          return { name: src.name, url: src.url };
         }
       }
     }
@@ -1284,6 +1363,7 @@ formUploadMedia.onsubmit = async (e) => {
 
   const queue = [];
   const filesToUpload = [];
+  const filesToCheck = [];
   
   playlistFileItems.forEach(file => {
     const existing = findExistingFile(file.name);
@@ -1293,9 +1373,39 @@ formUploadMedia.onsubmit = async (e) => {
         url: existing.url
       });
     } else {
-      // Check if we already staged this new file to be uploaded in this form submission
-      // (to preserve duplicate new files in the queue)
-      let originalIndex = filesToUpload.indexOf(file);
+      filesToCheck.push(file);
+    }
+  });
+
+  // Pre-upload check: ask the server if these files already exist physically on disk
+  let serverMatchedFiles = [];
+  if (filesToCheck.length > 0) {
+    try {
+      const checkRes = await fetch(`/api/collections/${activeColl.id}/check-files`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: filesToCheck.map(f => ({ name: f.name, size: f.size }))
+        })
+      });
+      if (checkRes.ok) {
+        serverMatchedFiles = await checkRes.json();
+      }
+    } catch (checkErr) {
+      console.error('Failed to pre-check duplicate files on server:', checkErr);
+    }
+  }
+
+  filesToCheck.forEach(file => {
+    const match = serverMatchedFiles.find(m => m.name === file.name && m.exists);
+    if (match) {
+      console.log(`Pre-upload duplicate check: reusing existing physical asset '${match.filename}'`);
+      queue.push({
+        name: file.name,
+        url: match.url
+      });
+    } else {
+      let originalIndex = filesToUpload.findIndex(f => f.name === file.name && f.size === file.size);
       if (originalIndex === -1) {
         filesToUpload.push(file);
         originalIndex = filesToUpload.length - 1;
@@ -1487,29 +1597,70 @@ async function renameCollectionPrompt(id, currentName) {
 }
 
 async function duplicateCollection(id) {
+  // Show duplication progress bar modal
+  openModal('modal-duplication-progress');
+  const barFill = document.getElementById('duplication-progress-bar-fill');
+  const barText = document.getElementById('duplication-progress-text');
+  
+  if (barFill && barText) {
+    barFill.style.width = '0%';
+    barText.textContent = '0%';
+  }
+  
+  let progress = 0;
+  const progressInterval = setInterval(() => {
+    if (progress < 30) {
+      progress += 2.5;
+    } else if (progress < 70) {
+      progress += 1.2;
+    } else if (progress < 90) {
+      progress += 0.6;
+    }
+    if (barFill && barText) {
+      barFill.style.width = `${progress}%`;
+      barText.textContent = `${Math.floor(progress)}%`;
+    }
+  }, 50);
+
   try {
     const res = await fetch(`/api/collections/${id}/duplicate`, { method: 'POST' });
+    clearInterval(progressInterval);
+    
     if (res.ok) {
+      if (barFill && barText) {
+        barFill.style.width = '100%';
+        barText.textContent = '100% Completed';
+      }
       const data = await res.json();
-      selectCollection(data.id);
+      
+      // Delay closing modal slightly so the user sees the satisfying 100% completion!
+      setTimeout(() => {
+        closeModal('modal-duplication-progress');
+        selectCollection(data.id);
+      }, 500);
+    } else {
+      closeModal('modal-duplication-progress');
+      alert("Failed to duplicate event.");
     }
   } catch (err) {
+    clearInterval(progressInterval);
+    closeModal('modal-duplication-progress');
     console.error("Duplication failed:", err);
   }
 }
 
 async function deleteCollectionPrompt(id) {
-  if (!confirm('Are you absolutely sure you want to delete this Collection? ALL associated files and scenes will be permanently deleted from the disk!')) return;
+  if (!confirm('Are you absolutely sure you want to delete this Event? ALL associated files and scenes will be permanently deleted from the disk!')) return;
   
   try {
     const res = await fetch(`/api/collections/${id}`, {
       method: 'DELETE'
     });
     if (res.ok) {
-      console.log('Collection successfully deleted.');
+      console.log('Event successfully deleted.');
     }
   } catch (err) {
-    console.error('Failed to delete collection:', err);
+    console.error('Failed to delete event:', err);
   }
 }
 
@@ -1552,9 +1703,92 @@ async function deleteScenePrompt(sceneId) {
   deleteScene(activeColl.id, sceneId);
 }
 
+async function deleteScene(collectionId, sceneId) {
+  if (!confirm("Are you sure you want to delete this scene? All layer configurations in this scene will be permanently lost!")) return;
+  try {
+    const res = await fetch(`/api/collections/${collectionId}/scenes/${sceneId}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      console.log("Scene successfully deleted.");
+    } else {
+      alert("Failed to delete scene.");
+    }
+  } catch (err) {
+    console.error("Failed to delete scene:", err);
+  }
+}
+
 // ==========================================
 // 5. EXISTING MEDIA PICKER LIBRARY SYSTEM
 // ==========================================
+
+function getOriginalFileNameOfFile(file, activeColl) {
+  let name = '';
+  let ext = '';
+  
+  if (file.url) {
+    const extIdx = file.url.lastIndexOf('.');
+    if (extIdx !== -1) {
+      ext = file.url.substring(extIdx);
+    }
+  }
+  
+  // 1. Check in single source URLs
+  if (activeColl && activeColl.sources) {
+    for (const src of activeColl.sources) {
+      if (!src.isPlaylist && src.url === file.url) {
+        name = src.name;
+        break;
+      }
+    }
+  }
+  
+  // 2. Check in playlist file URLs
+  if (!name && activeColl && activeColl.sources) {
+    for (const src of activeColl.sources) {
+      if (src.isPlaylist && src.playlistFiles) {
+        for (const pf of src.playlistFiles) {
+          if (pf.url === file.url) {
+            name = pf.name;
+            break;
+          }
+        }
+      }
+      if (name) break;
+    }
+  }
+  
+  // 3. Fallback: recover by stripping the _timestamp from physical filename
+  if (!name) {
+    const rawName = file.name;
+    const extIdx = rawName.lastIndexOf('.');
+    const baseWithTimestamp = extIdx !== -1 ? rawName.substring(0, extIdx) : rawName;
+    const lastUnderscore = baseWithTimestamp.lastIndexOf('_');
+    
+    if (lastUnderscore !== -1) {
+      const suffix = baseWithTimestamp.substring(lastUnderscore + 1);
+      if (/^\d+$/.test(suffix)) {
+        name = baseWithTimestamp.substring(0, lastUnderscore);
+      } else {
+        name = baseWithTimestamp;
+      }
+    } else {
+      name = baseWithTimestamp;
+    }
+  }
+  
+  // Ensure extension is included and not duplicated
+  if (ext) {
+    const nameLower = name.toLowerCase();
+    const extLower = ext.toLowerCase();
+    if (!nameLower.endsWith(extLower)) {
+      name = name + ext;
+    }
+  }
+  
+  return name;
+}
 
 const menuAddExistingSource = document.getElementById('menu-add-existing-source');
 if (menuAddExistingSource) {
@@ -1583,9 +1817,11 @@ if (menuAddExistingSource) {
           if (file.type === 'video') iconPath = 'M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z';
           else if (file.type === 'audio') iconPath = 'M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z';
           
+          const originalName = getOriginalFileNameOfFile(file, activeColl);
+          
           card.innerHTML = `
             <svg class="library-card-icon" viewBox="0 0 24 24"><path d="${iconPath}"/></svg>
-            <span class="library-card-name" title="${file.name}">${file.name}</span>
+            <span class="library-card-name" title="${originalName}">${originalName}</span>
           `;
           
           card.onclick = () => {
@@ -1593,7 +1829,10 @@ if (menuAddExistingSource) {
             card.classList.add('selected');
             selectedLibraryFile = file;
             document.getElementById('btn-add-existing-submit').disabled = false;
-            document.getElementById('existing-source-name').value = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+            
+            const extIdx = originalName.lastIndexOf('.');
+            const originalNameWithoutExt = extIdx !== -1 ? originalName.substring(0, extIdx) : originalName;
+            document.getElementById('existing-source-name').value = originalNameWithoutExt;
           };
           grid.appendChild(card);
         });
@@ -1611,13 +1850,16 @@ document.getElementById('btn-add-existing-submit').onclick = async () => {
   if (!activeColl || !currentDbState.activeSceneId || !selectedLibraryFile) return;
   
   const name = document.getElementById('existing-source-name').value.trim();
+  const originalName = getOriginalFileNameOfFile(selectedLibraryFile, activeColl);
+  const extIdx = originalName.lastIndexOf('.');
+  const originalNameWithoutExt = extIdx !== -1 ? originalName.substring(0, extIdx) : originalName;
   
   try {
     const res = await fetch(`/api/collections/${activeColl.id}/scenes/${currentDbState.activeSceneId}/sources/existing`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: name || selectedLibraryFile.name,
+        name: name || originalNameWithoutExt,
         filename: selectedLibraryFile.name,
         type: selectedLibraryFile.type
       })
@@ -1854,6 +2096,9 @@ function resetUploadForm() {
   selectedFile = null;
   selectedFiles = [];
   playlistFileItems = [];
+  pendingOverwrites = [];
+  const banner = document.getElementById('overwrite-warning-banner');
+  if (banner) banner.style.display = 'none';
   
   const chkMakePlaylist = document.getElementById('chk-make-playlist');
   if (chkMakePlaylist) {
@@ -1947,6 +2192,56 @@ function handleFileSelection(files) {
       const file = selectedFiles[0];
       nameInput.value = file.name.substring(0, file.name.lastIndexOf('.'));
     }
+  }
+
+  // Active event duplicate filename overwrite check
+  const activeColl = getActiveCollection();
+  pendingOverwrites = [];
+  const banner = document.getElementById('overwrite-warning-banner');
+  const bannerFileName = document.getElementById('overwrite-file-name');
+  if (banner) banner.style.display = 'none';
+
+  if (activeColl && activeColl.sources) {
+    newFiles.forEach(file => {
+      const targetSanitized = getSanitizedFilename(file.name);
+      const matchedSource = activeColl.sources.find(src => {
+        if (src.name && getSanitizedFilename(src.name) === targetSanitized) {
+          return true;
+        }
+        if (src.url) {
+          const decodedUrl = decodeURIComponent(src.url);
+          const urlFile = decodedUrl.substring(decodedUrl.lastIndexOf('/') + 1);
+          const extIdx = urlFile.lastIndexOf('.');
+          const ext = extIdx !== -1 ? urlFile.substring(extIdx) : '';
+          const baseWithTimestamp = extIdx !== -1 ? urlFile.substring(0, extIdx) : urlFile;
+          const lastUnderscore = baseWithTimestamp.lastIndexOf('_');
+          let recovered = '';
+          if (lastUnderscore !== -1) {
+            const base = baseWithTimestamp.substring(0, lastUnderscore);
+            recovered = base + ext;
+          } else {
+            recovered = urlFile;
+          }
+          if (recovered.toLowerCase() === targetSanitized) {
+            return true;
+          }
+        }
+        return false;
+      });
+
+      if (matchedSource) {
+        pendingOverwrites.push({ file, source: matchedSource });
+      }
+    });
+  }
+
+  if (pendingOverwrites.length > 0 && banner && bannerFileName) {
+    const listNames = pendingOverwrites.map(item => item.file.name).join(', ');
+    bannerFileName.textContent = listNames;
+    banner.style.display = 'block';
+    
+    // Lock the submission until they click either Yes or No on the notification box
+    elBtnUploadSubmit.disabled = true;
   }
 }
 
@@ -2255,17 +2550,19 @@ if (menuAddTextOverlay) {
   menuAddTextOverlay.onclick = () => openModal('modal-text-overlay');
 }
 
-// Custom Font Upload Submission
-const formUploadFont = document.getElementById('form-upload-font');
-if (formUploadFont) {
-  formUploadFont.onsubmit = async (e) => {
+// Custom Font Upload Submission (Simplified popup, auto font name extraction)
+const formUploadFontPopup = document.getElementById('form-upload-font-popup');
+if (formUploadFontPopup) {
+  formUploadFontPopup.onsubmit = async (e) => {
     e.preventDefault();
     const activeColl = getActiveCollection();
     if (!activeColl) return;
     
-    const fontName = document.getElementById('new-font-name').value.trim();
-    const fontFile = document.getElementById('new-font-file').files[0];
-    if (!fontFile || !fontName) return;
+    const fontFile = document.getElementById('popup-font-file').files[0];
+    if (!fontFile) return;
+    
+    // Automatically determine the font name from the file name without extension
+    const fontName = fontFile.name.substring(0, fontFile.name.lastIndexOf('.'));
     
     const formData = new FormData();
     formData.append('fontName', fontName);
@@ -2277,9 +2574,9 @@ if (formUploadFont) {
         body: formData
       });
       if (res.ok) {
-        alert("Custom font uploaded successfully! You can now apply it to your text layers.");
-        formUploadFont.reset();
-        loadManageSourcesTable();
+        alert(`Custom font "${fontName}" uploaded successfully! You can now apply it to your text layers.`);
+        formUploadFontPopup.reset();
+        closeModal('modal-upload-font');
       } else {
         alert("Failed to upload custom font. Ensure it is a valid TTF/OTF/WOFF file.");
       }
@@ -2315,8 +2612,26 @@ function loadManageSourcesTable() {
       detailsText = source.filename || source.url || 'No extra info';
     }
     
+    let displayName = source.name;
+    if (source.type !== 'text' && source.type !== 'webrtc') {
+      let ext = '';
+      if (source.url) {
+        const extIdx = source.url.lastIndexOf('.');
+        if (extIdx !== -1) {
+          ext = source.url.substring(extIdx);
+        }
+      }
+      if (ext) {
+        const nameLower = displayName.toLowerCase();
+        const extLower = ext.toLowerCase();
+        if (!nameLower.endsWith(extLower)) {
+          displayName = displayName + ext;
+        }
+      }
+    }
+    
     tr.innerHTML = `
-      <td style="font-weight: 600; color: #fff;">${source.name}</td>
+      <td style="font-weight: 600; color: #fff;">${displayName}</td>
       <td><span class="source-badge badge-${source.type}">${source.type}</span></td>
       <td style="color: var(--text-secondary); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${detailsText}</td>
       <td style="text-align: right;">
@@ -2334,14 +2649,24 @@ async function deleteMasterSource(sourceId) {
   if (!confirm("Are you sure you want to delete this asset from the Master Library?")) return;
   
   try {
-    const res = await fetch(`/api/collections/${activeColl.id}/sources/${sourceId}`, {
+    let res = await fetch(`/api/collections/${activeColl.id}/sources/${sourceId}`, {
       method: 'DELETE'
     });
     
     if (res.status === 409) {
       const data = await res.json();
-      const sceneNames = data.affectedScenes.map(s => `"${s.name}"`).join(', ');
-      alert(`⚠️ Cannot Delete Asset!\n\nThis master source is currently active in the following Scenes: ${sceneNames}.\n\nPlease delete these layers from their respective scenes first before purging the master asset.`);
+      const sceneNames = data.affectedScenes.map(s => `"${s}"`).join(', ');
+      if (confirm(`⚠️ Asset in Use!\n\nThis master source is active in these Scenes: ${sceneNames}.\n\nDo you want to permanently delete it and remove it from all associated scenes?`)) {
+        res = await fetch(`/api/collections/${activeColl.id}/sources/${sourceId}?force=true`, {
+          method: 'DELETE'
+        });
+        if (res.ok) {
+          console.log("Master source force deleted.");
+          loadManageSourcesTable();
+        } else {
+          alert("Failed to delete master source.");
+        }
+      }
     } else if (res.ok) {
       console.log("Master source deleted.");
       loadManageSourcesTable();
@@ -2399,4 +2724,41 @@ if (previewBadge) {
 // Start up routines
 window.onload = () => {
   checkMultiScreenSupport();
+
+  // Overwrite confirm button bindings
+  const btnYes = document.getElementById('btn-overwrite-confirm-yes');
+  const btnNo = document.getElementById('btn-overwrite-confirm-no');
+  
+  if (btnYes) {
+    btnYes.onclick = async () => {
+      const activeColl = getActiveCollection();
+      if (activeColl && pendingOverwrites.length > 0) {
+        for (const item of pendingOverwrites) {
+          console.log(`Overwriting: deleting existing source ${item.source.id} (${item.file.name}) first`);
+          try {
+            await fetch(`/api/collections/${activeColl.id}/sources/${item.source.id}?force=true`, {
+              method: 'DELETE'
+            });
+          } catch (err) {
+            console.error(`Failed to delete older version for overwrite:`, err);
+          }
+        }
+        // Force state reload
+        socket.emit('request-state-sync');
+      }
+      pendingOverwrites = [];
+      const banner = document.getElementById('overwrite-warning-banner');
+      if (banner) banner.style.display = 'none';
+      elBtnUploadSubmit.disabled = false;
+    };
+  }
+  
+  if (btnNo) {
+    btnNo.onclick = () => {
+      pendingOverwrites = [];
+      const banner = document.getElementById('overwrite-warning-banner');
+      if (banner) banner.style.display = 'none';
+      elBtnUploadSubmit.disabled = false;
+    };
+  }
 };

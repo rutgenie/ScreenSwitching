@@ -143,6 +143,51 @@ function getCollectionDir(collectionId) {
   return dir;
 }
 
+// Helper: Check if a file URL is referenced by any collection other than the one being deleted
+function isFileReferenced(fileUrl, excludeCollectionId) {
+  if (!state || !state.collections) return false;
+  
+  for (const coll of state.collections) {
+    if (coll.id === excludeCollectionId) continue;
+    
+    // Check master sources
+    if (coll.sources) {
+      for (const src of coll.sources) {
+        if (src.url === fileUrl) return true;
+        if (src.isPlaylist && src.playlistFiles) {
+          for (const pf of src.playlistFiles) {
+            if (pf.url === fileUrl) return true;
+          }
+        }
+      }
+    }
+    
+    // Check scenes and layers
+    if (coll.scenes) {
+      for (const scene of coll.scenes) {
+        if (scene.sources) {
+          for (const layer of scene.sources) {
+            if (layer.url === fileUrl) return true;
+            if (layer.isPlaylist && layer.playlistFiles) {
+              for (const pf of layer.playlistFiles) {
+                if (pf.url === fileUrl) return true;
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Check fonts
+    if (coll.fonts) {
+      for (const font of coll.fonts) {
+        if (font.url === fileUrl) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Multer Setup for Dynamic Collection Storage (supporting multiple array files)
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -225,10 +270,33 @@ app.delete('/api/collections/:id', (req, res) => {
   const index = state.collections.findIndex(c => c.id === id);
   if (index === -1) return res.status(404).json({ error: 'Collection not found.' });
 
-  // Delete physical directory
+  // Safe reference-counted deletion of physical files
   const dirPath = path.join(UPLOADS_DIR, id);
   if (fs.existsSync(dirPath)) {
-    fs.rmSync(dirPath, { recursive: true, force: true });
+    try {
+      const files = fs.readdirSync(dirPath);
+      files.forEach(file => {
+        const fileUrl = `/uploads/${id}/${file}`;
+        if (!isFileReferenced(fileUrl, id)) {
+          // File is not referenced by any other collection, safe to delete!
+          try {
+            fs.unlinkSync(path.join(dirPath, file));
+            console.log(`Physically deleted unreferenced file: ${fileUrl}`);
+          } catch (unlinkErr) {
+            console.error(`Failed to delete file ${fileUrl}:`, unlinkErr);
+          }
+        } else {
+          console.log(`Kept referenced file: ${fileUrl}`);
+        }
+      });
+      
+      // If the directory is now empty, delete it
+      if (fs.readdirSync(dirPath).length === 0) {
+        fs.rmdirSync(dirPath);
+      }
+    } catch (err) {
+      console.error(`Failed to safely clean up physical directory for collection ${id}:`, err);
+    }
   }
 
   state.collections.splice(index, 1);
@@ -307,6 +375,66 @@ app.post('/api/upload', upload.array('mediaFiles', 50), (req, res) => {
   const scene = collection.scenes.find(s => s.id === sceneId);
   if (!scene) return res.status(404).json({ error: 'Scene not found.' });
 
+  // Deduplicate newly uploaded files on the server to prevent wasting disk space
+  if (req.files && req.files.length > 0) {
+    const dir = getCollectionDir(collectionId);
+    try {
+      const existingFilenames = fs.readdirSync(dir);
+      
+      req.files.forEach(file => {
+        const decodedOriginalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        const newExt = path.extname(decodedOriginalName).toLowerCase();
+        const newBasename = path.basename(decodedOriginalName, newExt)
+          .replace(/[^\p{L}\p{N}\-_.]/gu, '_')
+          .toLowerCase();
+        const newSanitized = `${newBasename}${newExt}`;
+        
+        let matchedFilename = null;
+        for (const name of existingFilenames) {
+          if (name === file.filename) continue;
+          
+          const filePath = path.join(dir, name);
+          if (!fs.existsSync(filePath)) continue;
+          const stats = fs.statSync(filePath);
+          
+          if (stats.size === file.size) {
+            const extIdx = name.lastIndexOf('.');
+            const ext = extIdx !== -1 ? name.substring(extIdx) : '';
+            const baseWithTimestamp = extIdx !== -1 ? name.substring(0, extIdx) : name;
+            const lastUnderscore = baseWithTimestamp.lastIndexOf('_');
+            
+            let recovered = '';
+            if (lastUnderscore !== -1) {
+              const base = baseWithTimestamp.substring(0, lastUnderscore);
+              recovered = base + ext;
+            } else {
+              recovered = name;
+            }
+            
+            if (recovered.toLowerCase() === newSanitized) {
+              matchedFilename = name;
+              break;
+            }
+          }
+        }
+        
+        if (matchedFilename) {
+          console.log(`Server-side Deduplication: Reusing existing file '${matchedFilename}' instead of new upload '${file.filename}'`);
+          try {
+            if (fs.existsSync(file.path)) {
+              fs.unlinkSync(file.path);
+            }
+          } catch (unlinkErr) {
+            console.error('Failed to delete duplicate uploaded file:', unlinkErr);
+          }
+          file.filename = matchedFilename;
+        }
+      });
+    } catch (dirErr) {
+      console.error('Failed to execute server-side deduplication:', dirErr);
+    }
+  }
+
   collection.sources = collection.sources || [];
   collection.fonts = collection.fonts || [];
 
@@ -341,8 +469,9 @@ app.post('/api/upload', upload.array('mediaFiles', 50), (req, res) => {
       } else if (hasUploadedFiles && item.originalIndex !== undefined) {
         const file = req.files[item.originalIndex];
         if (file) {
+          const decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
           return {
-            name: file.originalname,
+            name: decodedName,
             url: `/uploads/${collectionId}/${file.filename}`
           };
         }
@@ -351,10 +480,13 @@ app.post('/api/upload', upload.array('mediaFiles', 50), (req, res) => {
     }).filter(Boolean);
   } else if (hasUploadedFiles) {
     // Fallback if no queue was sent
-    playlistFiles = req.files.map(file => ({
-      name: file.originalname,
-      url: `/uploads/${collectionId}/${file.filename}`
-    }));
+    playlistFiles = req.files.map(file => {
+      const decodedName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      return {
+        name: decodedName,
+        url: `/uploads/${collectionId}/${file.filename}`
+      };
+    });
   }
 
   if (playlistFiles.length === 0) {
@@ -446,9 +578,73 @@ app.post('/api/upload', upload.array('mediaFiles', 50), (req, res) => {
 // 6.2. Add a Custom Typography Font file to the library
 app.post('/api/collections/:id/fonts', fontUpload.single('fontFile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No font file provided.' });
+
+  // Deduplicate newly uploaded font on the server to prevent wasting disk space
+  const fontsDir = path.join(UPLOADS_DIR, '_fonts');
+  try {
+    if (fs.existsSync(fontsDir)) {
+      const existingFilenames = fs.readdirSync(fontsDir);
+      const decodedOriginalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+      const newExt = path.extname(decodedOriginalName).toLowerCase();
+      const newBasename = path.basename(decodedOriginalName, newExt)
+        .replace(/[^\p{L}\p{N}\-_.]/gu, '_')
+        .toLowerCase();
+      const newSanitized = `${newBasename}${newExt}`;
+      
+      let matchedFilename = null;
+      for (const name of existingFilenames) {
+        if (name === req.file.filename) continue;
+        
+        const filePath = path.join(fontsDir, name);
+        if (!fs.existsSync(filePath)) continue;
+        const stats = fs.statSync(filePath);
+        
+        if (stats.size === req.file.size) {
+          const extIdx = name.lastIndexOf('.');
+          const ext = extIdx !== -1 ? name.substring(extIdx) : '';
+          const baseWithTimestamp = extIdx !== -1 ? name.substring(0, extIdx) : name;
+          const lastUnderscore = baseWithTimestamp.lastIndexOf('_');
+          
+          let recovered = '';
+          if (lastUnderscore !== -1) {
+            const base = baseWithTimestamp.substring(0, lastUnderscore);
+            recovered = base + ext;
+          } else {
+            recovered = name;
+          }
+          
+          if (recovered.toLowerCase() === newSanitized) {
+            matchedFilename = name;
+            break;
+          }
+        }
+      }
+      
+      if (matchedFilename) {
+        console.log(`Server-side Font Deduplication: Reusing existing font '${matchedFilename}' instead of new upload '${req.file.filename}'`);
+        try {
+          if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+          }
+        } catch (unlinkErr) {
+          console.error('Failed to delete duplicate uploaded font file:', unlinkErr);
+        }
+        req.file.filename = matchedFilename;
+      }
+    }
+  } catch (fontErr) {
+    console.error('Failed to execute server-side font deduplication:', fontErr);
+  }
+
   const { id } = req.params;
-  const { fontName } = req.body;
-  if (!fontName) return res.status(400).json({ error: 'Font name is required.' });
+  let { fontName } = req.body;
+  if (!fontName) {
+    if (req.file.originalname) {
+      fontName = path.parse(req.file.originalname).name;
+    } else {
+      return res.status(400).json({ error: 'Font name is required.' });
+    }
+  }
 
   const collection = state.collections.find(c => c.id === id);
   if (!collection) return res.status(404).json({ error: 'Collection not found.' });
@@ -856,7 +1052,7 @@ app.delete('/api/collections/:id/sources/:sourceId', (req, res) => {
 
   // 2. Fail if dependency exists and not forced
   if (affectedScenes.length > 0 && !force) {
-    return res.json({
+    return res.status(409).json({
       success: false,
       requiresConfirmation: true,
       affectedScenes: affectedScenes,
@@ -877,18 +1073,18 @@ app.delete('/api/collections/:id/sources/:sourceId', (req, res) => {
     scene.sources = scene.sources.filter(src => src.sourceId !== sourceId && src.id !== sourceId);
   });
 
-  // 5. Delete physical files
+  // 5. Delete physical files (using safe reference-counting check to prevent deleting shared media)
   if (masterSource) {
     if (masterSource.isPlaylist && masterSource.playlistFiles) {
       masterSource.playlistFiles.forEach(pf => {
         const filepath = path.join(__dirname, pf.url);
-        if (fs.existsSync(filepath)) {
+        if (fs.existsSync(filepath) && !isFileReferenced(pf.url, id)) {
           try { fs.unlinkSync(filepath); } catch (e) { console.error(e); }
         }
       });
     } else if (masterSource.url) {
       const filepath = path.join(__dirname, masterSource.url);
-      if (fs.existsSync(filepath)) {
+      if (fs.existsSync(filepath) && !isFileReferenced(masterSource.url, id)) {
         try { fs.unlinkSync(filepath); } catch (e) { console.error(e); }
       }
     }
@@ -900,7 +1096,7 @@ app.delete('/api/collections/:id/sources/:sourceId', (req, res) => {
     if (fontIdx !== -1) {
       const font = collection.fonts[fontIdx];
       const filepath = path.join(__dirname, font.url);
-      if (fs.existsSync(filepath)) {
+      if (fs.existsSync(filepath) && !isFileReferenced(font.url, id)) {
         try { fs.unlinkSync(filepath); } catch (e) { console.error(e); }
       }
       collection.fonts.splice(fontIdx, 1);
@@ -970,6 +1166,77 @@ app.get('/api/collections/:id/files', (req, res) => {
   }
 });
 
+// 9.5. Check if uploaded files already exist on disk (pre-upload duplicate check)
+app.post('/api/collections/:id/check-files', (req, res) => {
+  const { id } = req.params;
+  const { files } = req.body;
+  if (!files || !Array.isArray(files)) {
+    return res.status(400).json({ error: 'Files array is required.' });
+  }
+
+  const dir = getCollectionDir(id);
+  if (!fs.existsSync(dir)) {
+    return res.json(files.map(f => ({ name: f.name, exists: false })));
+  }
+
+  try {
+    const existingFilenames = fs.readdirSync(dir);
+    const results = files.map(file => {
+      const newExt = path.extname(file.name).toLowerCase();
+      const newBasename = path.basename(file.name, newExt)
+        .replace(/[^\p{L}\p{N}\-_.]/gu, '_')
+        .toLowerCase();
+      const newSanitized = `${newBasename}${newExt}`;
+
+      let matchedFilename = null;
+      for (const name of existingFilenames) {
+        const filePath = path.join(dir, name);
+        if (!fs.existsSync(filePath)) continue;
+        const stats = fs.statSync(filePath);
+
+        if (stats.size === file.size) {
+          const extIdx = name.lastIndexOf('.');
+          const ext = extIdx !== -1 ? name.substring(extIdx) : '';
+          const baseWithTimestamp = extIdx !== -1 ? name.substring(0, extIdx) : name;
+          const lastUnderscore = baseWithTimestamp.lastIndexOf('_');
+
+          let recovered = '';
+          if (lastUnderscore !== -1) {
+            const base = baseWithTimestamp.substring(0, lastUnderscore);
+            recovered = base + ext;
+          } else {
+            recovered = name;
+          }
+
+          if (recovered.toLowerCase() === newSanitized) {
+            matchedFilename = name;
+            break;
+          }
+        }
+      }
+
+      if (matchedFilename) {
+        return {
+          name: file.name,
+          exists: true,
+          url: `/uploads/${id}/${matchedFilename}`,
+          filename: matchedFilename
+        };
+      } else {
+        return {
+          name: file.name,
+          exists: false
+        };
+      }
+    });
+
+    res.json(results);
+  } catch (err) {
+    console.error('Failed to check duplicate files on server:', err);
+    res.status(500).json({ error: 'Failed to check duplicate files.' });
+  }
+});
+
 // 10. Duplicate a collection
 app.post('/api/collections/:id/duplicate', (req, res) => {
   const { id } = req.params;
@@ -978,38 +1245,10 @@ app.post('/api/collections/:id/duplicate', (req, res) => {
 
   const newId = `coll_${uuidv4().substring(0, 8)}`;
   const newDir = getCollectionDir(newId);
-  const oldDir = path.join(UPLOADS_DIR, id);
-
-  // Copy physical files if old directory exists
-  if (fs.existsSync(oldDir)) {
-    try {
-      const files = fs.readdirSync(oldDir);
-      files.forEach(file => {
-        fs.copyFileSync(path.join(oldDir, file), path.join(newDir, file));
-      });
-    } catch (err) {
-      console.error('Failed to copy physical files during duplication:', err);
-    }
-  }
 
   const duplicatedSources = (srcCollection.sources || []).map(s => {
-    let newUrl = s.url;
-    if (s.url && s.url.startsWith(`/uploads/${id}/`)) {
-      newUrl = s.url.replace(`/uploads/${id}/`, `/uploads/${newId}/`);
-    }
-    
-    let playFiles = s.playlistFiles || [];
-    if (s.isPlaylist) {
-      playFiles = playFiles.map(f => {
-        let fUrl = f.url;
-        if (f.url && f.url.startsWith(`/uploads/${id}/`)) {
-          fUrl = f.url.replace(`/uploads/${id}/`, `/uploads/${newId}/`);
-        }
-        return { ...f, url: fUrl };
-      });
-    }
-
-    return { ...s, url: newUrl, playlistFiles: playFiles };
+    // Retain original URLs (pointing to original collection folder) to achieve zero-space duplicate sharing
+    return { ...s };
   });
 
   // Helper recursive mapping function to clone scenes and sources with fresh IDs
@@ -1017,23 +1256,8 @@ app.post('/api/collections/:id/duplicate', (req, res) => {
     const newSceneId = `scene_${uuidv4().substring(0, 8)}`;
     const duplicatedSources = oldScene.sources.map(oldSrc => {
       const newSrcId = `src_${uuidv4().substring(0, 8)}`;
-      let newUrl = oldSrc.url;
-      if (oldSrc.url && oldSrc.url.startsWith(`/uploads/${id}/`)) {
-        newUrl = oldSrc.url.replace(`/uploads/${id}/`, `/uploads/${newId}/`);
-      }
-      
-      let playFiles = oldSrc.playlistFiles || [];
-      if (oldSrc.isPlaylist) {
-        playFiles = playFiles.map(f => {
-          let fUrl = f.url;
-          if (f.url && f.url.startsWith(`/uploads/${id}/`)) {
-            fUrl = f.url.replace(`/uploads/${id}/`, `/uploads/${newId}/`);
-          }
-          return { ...f, url: fUrl };
-        });
-      }
-
-      return { ...oldSrc, id: newSrcId, url: newUrl, playlistFiles: playFiles };
+      // Retain original URLs (pointing to original collection folder) to achieve zero-space duplicate sharing
+      return { ...oldSrc, id: newSrcId };
     });
 
     return {

@@ -30,14 +30,14 @@
         </div>
       </div>
       
-      <!-- Collections section -->
+      <!-- Events section -->
       <div class="collections-section">
         <div class="section-header">
-          <h3>Collections</h3>
-          <button class="btn-icon" id="btn-add-collection" title="Create Collection">+</button>
+          <h3>Events</h3>
+          <button class="btn-icon" id="btn-add-collection" title="Create Event">+</button>
         </div>
         <ul class="collection-list" id="collection-list-container">
-          <!-- Collections loaded dynamically -->
+          <!-- Events loaded dynamically -->
         </ul>
       </div>
       
@@ -60,10 +60,9 @@
       <!-- Top header detailing active Collection -->
       <header class="workspace-header">
         <div class="active-collection-info">
-          <h2 id="active-collection-title">Select or Create a Collection</h2>
+          <h2 id="active-collection-title">Select or Create an Event</h2>
         </div>
         <div class="workspace-actions">
-          <button class="btn-secondary btn-delete" id="btn-delete-collection" style="display: none;">Delete Collection</button>
         </div>
       </header>
       
@@ -157,21 +156,21 @@
        MODALS SECTION
        ========================================== -->
   
-  <!-- Modal 1: Create Collection -->
+  <!-- Modal 1: Create Event -->
   <div class="modal-overlay" id="modal-collection">
     <div class="modal-content">
       <div class="modal-header">
-        <h3>Create Event Collection</h3>
+        <h3>Create Event</h3>
         <button class="btn-icon" onclick="closeModal('modal-collection')">×</button>
       </div>
       <form id="form-create-collection">
         <div class="form-group">
-          <label for="new-collection-name">Collection Name</label>
+          <label for="new-collection-name">Event Name</label>
           <input type="text" id="new-collection-name" class="input-text" placeholder="e.g. Wedding Event, Corporate Gala" required>
         </div>
         <div class="form-actions">
           <button type="button" class="btn-secondary" onclick="closeModal('modal-collection')">Cancel</button>
-          <button type="submit" class="btn-primary">Create Collection</button>
+          <button type="submit" class="btn-primary">Create Event</button>
         </div>
       </form>
     </div>
@@ -218,6 +217,25 @@
             <p id="drag-label-text">Drag and drop file(s) here, or click to browse</p>
             <span>Supports Pictures (PNG, JPG), Videos (MP4), Audio (MP3, WAV)</span>
             <input type="file" id="media-file-input" style="display: none;" multiple accept="image/*,video/*,audio/*">
+          </div>
+        </div>
+        
+        <!-- New Version/Overwrite Notification Banner -->
+        <div class="form-group" id="overwrite-warning-banner" style="display: none; margin-top: 10px;">
+          <div class="overwrite-warning-box" style="padding: 12px; background: rgba(235, 94, 40, 0.15); border: 1px solid var(--accent); border-radius: 6px; font-size: 0.85rem; color: #fff;">
+            <div style="display: flex; align-items: flex-start; gap: 8px;">
+              <span style="font-size: 1.1rem; line-height: 1;">⚠️</span>
+              <div style="flex: 1;">
+                <strong style="color: var(--accent);">Newer Version Detected!</strong>
+                <p style="margin: 4px 0 8px 0; font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">
+                  A file with the name <code id="overwrite-file-name" style="background: rgba(0,0,0,0.3); padding: 2px 4px; border-radius: 3px; font-family: monospace;"></code> already exists in this event. Would you like to permanently delete the older version from the system before uploading this new one?
+                </p>
+                <div style="display: flex; gap: 8px;">
+                  <button type="button" class="btn-primary" id="btn-overwrite-confirm-yes" style="padding: 4px 10px; font-size: 0.75rem; background: var(--accent); border-color: var(--accent);">Yes, delete older version</button>
+                  <button type="button" class="btn-secondary" id="btn-overwrite-confirm-no" style="padding: 4px 10px; font-size: 0.75rem;">No, upload as duplicate</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -351,28 +369,12 @@
     </div>
   </div>
 
-  <!-- Modal 5: Manage Sources (Asset table, dependencies, custom font uploader) -->
+  <!-- Modal 5: Manage Sources (Asset table, dependencies) -->
   <div class="modal-overlay" id="modal-manage-sources">
     <div class="modal-content" style="width: 820px; max-width: 90vw;">
       <div class="modal-header">
         <h3>⚙️ Manage Collection Sources Library</h3>
         <button class="btn-icon" onclick="closeModal('modal-manage-sources')">×</button>
-      </div>
-      
-      <!-- Upload Custom Font Panel -->
-      <div class="playlist-mgr-container" style="margin-top: 0; padding: 12px; margin-bottom: 20px;">
-        <h4 style="font-size: 0.8rem; margin: 0 0 8px 0; color: var(--accent); display: flex; align-items: center; gap: 6px;">✏️ Upload Custom Font Family</h4>
-        <form id="form-upload-font" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
-          <div style="flex: 2; min-width: 180px;">
-            <label style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; display: block;">Font Family Name</label>
-            <input type="text" id="new-font-name" class="input-text" placeholder="e.g. My Custom Brand Font" required style="padding: 6px 10px; font-size: 0.8rem;">
-          </div>
-          <div style="flex: 3; min-width: 220px;">
-            <label style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; display: block;">Font File (.ttf, .otf, .woff, .woff2)</label>
-            <input type="file" id="new-font-file" accept=".ttf,.otf,.woff,.woff2" required style="font-size: 0.8rem; border: 1px solid rgba(255,255,255,0.06); padding: 5px; border-radius: 6px; width: 100%; cursor: pointer;">
-          </div>
-          <button type="submit" class="btn-primary" style="padding: 6px 14px; font-size: 0.8rem; height: 32px;">Upload Font</button>
-        </form>
       </div>
 
       <div class="form-group">
@@ -400,8 +402,42 @@
     </div>
   </div>
 
+  <!-- Modal 5.5: Upload Custom Font -->
+  <div class="modal-overlay" id="modal-upload-font">
+    <div class="modal-content" style="width: 400px;">
+      <div class="modal-header">
+        <h3>✏️ Upload Custom Font</h3>
+        <button class="btn-icon" onclick="closeModal('modal-upload-font')">×</button>
+      </div>
+      <form id="form-upload-font-popup">
+        <div class="form-group">
+          <label style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 8px; display: block;">Select Font File (.ttf, .otf, .woff, .woff2)</label>
+          <input type="file" id="popup-font-file" accept=".ttf,.otf,.woff,.woff2" required style="font-size: 0.85rem; border: 1px solid rgba(255,255,255,0.06); padding: 8px; border-radius: 6px; width: 100%; cursor: pointer; background: var(--bg-input); color: var(--text-primary);">
+        </div>
+        <div class="form-actions" style="margin-top: 24px;">
+          <button type="button" class="btn-secondary" onclick="closeModal('modal-upload-font')">Cancel</button>
+          <button type="submit" class="btn-primary">Upload Font</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Context Dropdown Floating Menu -->
   <div class="context-menu" id="custom-context-menu"></div>
+
+  <!-- Modal 6: Duplication Progress Modal -->
+  <div class="modal-overlay" id="modal-duplication-progress">
+    <div class="modal-content" style="width: 400px; text-align: center;">
+      <h3 style="margin-bottom: 12px;">Copying Event Assets...</h3>
+      <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px;">
+        Please wait while we duplicate the event database and copy all associated multimedia files.
+      </p>
+      <div class="progress-bar-bg" style="height: 8px; border-radius: 4px; background: rgba(255,255,255,0.05); overflow: hidden;">
+        <div class="progress-bar-fill" id="duplication-progress-bar-fill" style="width: 0%; height: 100%; background: var(--primary); transition: width 0.1s ease;"></div>
+      </div>
+      <div class="progress-txt" id="duplication-progress-text" style="margin-top: 8px; font-weight: bold; text-align: center; color: var(--accent);">0%</div>
+    </div>
+  </div>
 
   <!-- Socket.io connection script -->
   <script src="/socket.io/socket.io.js"></script>

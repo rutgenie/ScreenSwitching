@@ -166,7 +166,7 @@ function synchronizeCustomFonts(collection) {
     cssRules += `
       @font-face {
         font-family: '${font.name}';
-        src: url('/uploads/fonts/${font.filename}');
+        src: url('/uploads/_fonts/${font.filename}');
       }
     `;
   });
@@ -206,6 +206,19 @@ socket.on('scene-changed', (data) => {
     clearActivePlaylistCycles();
     renderActiveScene(false); // Perform crossfade
   }
+});
+
+// Real-time event / collection switches
+socket.on('collection-changed', (data) => {
+  currentDbState = data.state;
+  if (currentDbState) {
+    currentDbState.activeCollectionId = data.activeCollectionId;
+    currentDbState.activeSceneId = data.activeSceneId;
+    const collection = currentDbState.collections.find(c => c.id === currentDbState.activeCollectionId);
+    synchronizeCustomFonts(collection);
+  }
+  clearActivePlaylistCycles();
+  renderActiveScene(false); // Perform crossfade
 });
 
 // Dynamic source sliders or visibility shifts
