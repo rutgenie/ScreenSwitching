@@ -23,29 +23,23 @@ fullscreenOverlay.onclick = () => {
 
 function requestFullscreen() {
   const docEl = document.documentElement;
-  
-  const launchFS = docEl.requestFullscreen || 
-                   docEl.mozRequestFullScreen || 
-                   docEl.webkitRequestFullScreen || 
+
+  const launchFS = docEl.requestFullscreen ||
+                   docEl.mozRequestFullScreen ||
+                   docEl.webkitRequestFullScreen ||
                    docEl.msRequestFullscreen;
-                   
+
   if (launchFS) {
     launchFS.call(docEl)
       .then(() => {
-        // Fade out overlay prompt
         fullscreenOverlay.style.opacity = 0;
-        setTimeout(() => {
-          fullscreenOverlay.style.display = 'none';
-        }, 500);
+        setTimeout(() => { fullscreenOverlay.style.display = 'none'; }, 500);
         reportDisplayStatus();
       })
       .catch((err) => {
-        console.error('Fullscreen launch rejected:', err);
-        // Fallback: hide overlay anyway so presentation works in normal window
+        console.warn('Fullscreen request rejected:', err);
         fullscreenOverlay.style.opacity = 0;
-        setTimeout(() => {
-          fullscreenOverlay.style.display = 'none';
-        }, 500);
+        setTimeout(() => { fullscreenOverlay.style.display = 'none'; }, 500);
       });
   } else {
     fullscreenOverlay.style.display = 'none';
@@ -73,7 +67,6 @@ document.addEventListener('fullscreenchange', reportDisplayStatus);
 document.addEventListener('webkitfullscreenchange', reportDisplayStatus);
 document.addEventListener('mozfullscreenchange', reportDisplayStatus);
 
-// ==========================================
 // 2. WEBRTC WINDOW CAST STREAM RECEIVER
 // ==========================================
 

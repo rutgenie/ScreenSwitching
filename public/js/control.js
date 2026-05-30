@@ -2436,34 +2436,153 @@ function renderScreenApiFallback(message) {
     </div>`;
 }
 
+// ---- LAUNCH BUTTON: Left click = auto-detect secondary → fullscreen directly ----
 elBtnLaunchDisplay.onclick = () => {
+  let targetScreen = null;
+
+  if (screenDetails && screenDetails.screens && screenDetails.screens.length > 1) {
+    // Prefer a non-primary screen, or any screen that isn't the current one
+    targetScreen = screenDetails.screens.find(s => !s.isPrimary && s !== screenDetails.currentScreen)
+                || screenDetails.screens.find(s => s !== screenDetails.currentScreen)
+                || screenDetails.screens.find(s => !s.isPrimary)
+                || screenDetails.screens[1];
+  }
+
+  launchDisplayOnScreen(targetScreen);
+};
+
+// ---- CHEVRON: Opens OBS-style display selection menu ----
+const elBtnChevron = document.getElementById('btn-launch-chevron');
+if (elBtnChevron) {
+  elBtnChevron.onclick = (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById('display-select-menu');
+    const backdrop = document.getElementById('display-select-backdrop');
+    if (!menu) return;
+
+    const isOpen = menu.style.display !== 'none';
+    if (isOpen) {
+      closeDisplaySelectMenu();
+    } else {
+      renderDisplaySelectMenu();
+      menu.style.display = 'block';
+      if (backdrop) backdrop.style.display = 'block';
+    }
+  };
+}
+
+// Close display select menu when backdrop is clicked
+const elDisplaySelectBackdrop = document.getElementById('display-select-backdrop');
+if (elDisplaySelectBackdrop) {
+  elDisplaySelectBackdrop.onclick = () => closeDisplaySelectMenu();
+}
+
+function closeDisplaySelectMenu() {
+  const menu = document.getElementById('display-select-menu');
+  const backdrop = document.getElementById('display-select-backdrop');
+  if (menu) menu.style.display = 'none';
+  if (backdrop) backdrop.style.display = 'none';
+}
+
+/**
+ * Opens display.html directly on the specified screen using coordinate-based
+ * window.open() features (left/top/width/height). This correctly positions the
+ * popup on the target physical monitor. The display window then shows a
+ * "Enter Fullscreen Mode" overlay that the user clicks to enter true fullscreen
+ * — this is required because requestFullscreen() needs a direct user gesture
+ * inside the display window itself.
+ */
+function launchDisplayOnScreen(screenObj) {
   let left = 0;
   let top = 0;
-  let width = 1280;
-  let height = 720;
-  let popupFeatures = 'menubar=no,location=no,status=no,toolbar=no';
-  
-  if (screenDetails && screenDetails.screens.length > 1) {
-    const secondaryScreen = screenDetails.screens.find(s => !s.isPrimary) || screenDetails.screens[1];
-    left = secondaryScreen.left;
-    top = secondaryScreen.top;
-    width = secondaryScreen.width;
-    height = secondaryScreen.height;
-    
-    popupFeatures += `,left=${left},top=${top},width=${width},height=${height},fullscreen=yes`;
+  let width = window.screen.width || 1920;
+  let height = window.screen.height || 1080;
+
+  if (screenObj) {
+    left   = screenObj.left   !== undefined ? screenObj.left   : 0;
+    top    = screenObj.top    !== undefined ? screenObj.top    : 0;
+    width  = screenObj.width  || 1920;
+    height = screenObj.height || 1080;
   } else {
-    left = window.screen.width || 1920;
-    width = window.screen.width || 1920;
-    height = window.screen.height || 1080;
-    
-    popupFeatures += `,left=${left},top=0,width=${width},height=${height}`;
+    // Single monitor fallback: open alongside the current window
+    left = window.screen.availLeft !== undefined ? window.screen.availLeft : 0;
+    top  = window.screen.availTop  !== undefined ? window.screen.availTop  : 0;
   }
-  
-  const displayWindow = window.open('/display.html', 'ScreenSwitchingDisplayOutput', popupFeatures);
+
+  const features = [
+    'menubar=no',
+    'toolbar=no',
+    'location=no',
+    'status=no',
+    'scrollbars=no',
+    `left=${left}`,
+    `top=${top}`,
+    `width=${width}`,
+    `height=${height}`
+  ].join(',');
+
+  const displayWindow = window.open('/display.html', 'ScreenSwitchingDisplayOutput', features);
+
   if (!displayWindow) {
-    alert('Popup Blocker detected! Please allow popups for this site so that ScreenSwitching can open the Showing Screen on your TV/Projector.');
+    alert('⚠️ Popup Blocker Detected!\n\nPlease allow popups for this site so ScreenSwitching can open the Showing Screen on your TV/Projector.');
+    return;
   }
-};
+
+  // Close the picker menu after launching
+  closeDisplaySelectMenu();
+
+  // Update feedback panel with launch confirmation
+  const label = screenObj ? (screenObj.label || `Display at (${left},${top})`) : 'Primary Display';
+  renderScreenApiFallback(`✅ Showing Screen launched on: <strong style="color:#fff">${label}</strong> — ${width}×${height} · Click the window to enter fullscreen`);
+  setTimeout(() => renderScreenApiFeedback(), 3000);
+}
+
+/**
+ * Builds and populates the OBS-style display selection floating menu.
+ * Falls back to a "primary only" option when Window Management API is unavailable.
+ */
+function renderDisplaySelectMenu() {
+  const itemsContainer = document.getElementById('display-select-items');
+  if (!itemsContainer) return;
+  itemsContainer.innerHTML = '';
+
+  const addItem = (label, resText, isCurrent, isSecondary, screenObj) => {
+    const item = document.createElement('div');
+    item.className = `display-select-item${isCurrent ? ' is-current' : ''}`;
+
+    let badgeClass = 'badge-primary-screen';
+    let badgeText = 'Primary';
+    if (isSecondary) { badgeClass = 'badge-secondary'; badgeText = 'Secondary'; }
+    if (isCurrent)   { badgeClass = 'badge-current';   badgeText = 'This Window'; }
+
+    item.innerHTML = `
+      <span class="dsi-icon">${isSecondary ? '📺' : '🖥️'}</span>
+      <div class="dsi-info">
+        <span class="dsi-label">${label}</span>
+        <span class="dsi-res">${resText}</span>
+      </div>
+      <span class="dsi-badge ${badgeClass}">${badgeText}</span>
+    `;
+
+    item.onclick = () => launchDisplayOnScreen(screenObj);
+    itemsContainer.appendChild(item);
+  };
+
+  if (screenDetails && screenDetails.screens && screenDetails.screens.length > 0) {
+    screenDetails.screens.forEach((scr, idx) => {
+      const label = scr.label || `Display ${idx + 1}`;
+      const resText = `${scr.width}×${scr.height}  •  Position: (${scr.left}, ${scr.top})`;
+      const isCurrent = scr === screenDetails.currentScreen;
+      const isSecondary = !scr.isPrimary || scr.left !== 0 || scr.top !== 0;
+      addItem(label, resText, isCurrent, isSecondary, scr);
+    });
+  } else {
+    // No screen API: show a single primary screen option
+    const w = window.screen.width || 1920;
+    const h = window.screen.height || 1080;
+    addItem('Primary Display', `${w}×${h}`, true, false, null);
+  }
+}
 
 // ==========================================
 // 10. MODALS TRIGGERS & UTILITY CONTROLS

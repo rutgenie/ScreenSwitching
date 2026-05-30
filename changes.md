@@ -1,6 +1,71 @@
-# Project Changes: Library Deletion Sync & Simplified Font Uploader
+# ScreenSwitching — Changelog
 
-This document summarizes the changes applied to the ScreenSwitching codebase to resolve the real-time library synchronization bug and integrate a simplified custom font uploader directly inside the text settings panel.
+---
+
+## Session: Multi-Monitor Detection & Fullscreen Projection Output
+**Date:** 2026-05-30
+
+### Overview
+Implemented OBS-style automatic multi-monitor detection and direct screen projection. The "Open Showing Screen" button now auto-detects connected displays using the browser Window Management API and positions the display window directly onto the target secondary monitor. A manual "Enter Fullscreen Mode" overlay inside the display window handles the browser security restriction that prevents programmatic fullscreen without a direct user gesture.
+
+---
+
+### 📁 1. Control Panel HTML
+#### File: [control.html](file:///home/ptong/Dev/ScreenSwitching_sideDev/public/control.html)
+
+- Replaced the plain "Open Showing Screen" button with an **OBS-style split button** (`#launch-split-btn-wrapper`):
+  - **Left side** (`#btn-launch-display`): Auto-detects the secondary monitor and launches the display window directly onto it.
+  - **Right chevron** (`#btn-launch-chevron`): Opens a floating display picker menu listing all detected monitors.
+- Added `#display-select-menu` — a floating panel listing each connected screen with its name, resolution, and position offset.
+- Added `#display-select-backdrop` — an invisible click-trap that closes the picker when clicking outside.
+- Added `#screen-api-feedback` — a dynamic area below the split button showing detected monitor count, names, and resolutions.
+
+---
+
+### 📁 2. Control Panel Application Logic
+#### File: [control.js](file:///home/ptong/Dev/ScreenSwitching_sideDev/public/js/control.js)
+
+- **`checkMultiScreenSupport()`** — Called on page load. Requests permission for the browser `Window Management API` (`getScreenDetails`). Attaches `onscreenchange` to auto-refresh the monitor list when displays are connected or disconnected. Falls back gracefully if denied or unsupported.
+
+- **`renderScreenApiFeedback()`** — Renders a per-screen row for every detected monitor, showing its label, resolution, and `(left, top)` offset. The screen hosting the control panel is highlighted with a coloured border.
+
+- **`launchDisplayOnScreen(screenObj)`** — Core projection launcher. Builds a `window.open()` features string with the target screen's `left`, `top`, `width`, and `height` coordinates to position the popup directly on the correct physical monitor. Opens `/display.html` in a named window (`ScreenSwitchingDisplayOutput`), reusing the same window handle if already open.
+
+- **Auto-detect logic** on main button click: Prefers a non-primary screen that is not the current window's screen, with three fallback tiers before defaulting to single-monitor mode.
+
+- **`renderDisplaySelectMenu()`** — Builds the OBS-style picker. Each item shows the screen icon (📺 secondary / 🖥️ primary), label, resolution, position, and a Primary / Secondary / This Window badge.
+
+---
+
+### 📁 3. Display Screen Logic
+#### File: [display.js](file:///home/ptong/Dev/ScreenSwitching_sideDev/public/js/display.js)
+
+- **Fullscreen overlay** (`#fullscreen-overlay`) is shown on load with a prompt:
+  > *"Click anywhere on this window to activate Fullscreen Output"*
+
+  This is the required design pattern for browser-based fullscreen. `requestFullscreen()` can only be called from a **direct user gesture inside the target window** — it cannot be triggered remotely from the opener window or via `setTimeout`/`postMessage` due to browser security policy.
+
+- **`requestFullscreen()`** — Calls `document.documentElement.requestFullscreen()`. On success, fades out and hides the overlay. On rejection, hides the overlay gracefully so the presentation continues in windowed mode.
+
+- **`reportDisplayStatus()`** — Emits the window's resolution and fullscreen state to the server so the control panel TV/Projector status indicator stays in sync.
+
+---
+
+### 📝 Design Notes & Known Limitations
+
+| Behaviour | Reason |
+|---|---|
+| Display window appears on the correct screen automatically | Window Management API provides exact `left/top` per physical monitor |
+| Fullscreen requires one click inside the display window | Browser security — `requestFullscreen()` requires a direct user gesture in that window; cannot be bypassed without Electron / native kiosk mode |
+| F11 inside the display window also achieves fullscreen (Windows) | Standard browser keyboard shortcut |
+| Screen picker shows monitor brand names | Provided by the OS via the Window Management API |
+| Graceful fallback on single-monitor setups | Opens on primary display when only one screen is detected |
+
+---
+
+## Previous Session: Library Deletion Sync & Simplified Font Uploader
+
+Changes applied to resolve the real-time library synchronization bug and integrate a simplified custom font uploader directly inside the text settings panel.
 
 ---
 

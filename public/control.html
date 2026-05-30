@@ -134,12 +134,27 @@
           <div class="screen-placement-panel">
             <h3>Multi-Screen Control</h3>
             <p style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">
-              Spawns the Showing Screen fullscreen onto secondary projectors/TVs.
+              Automatically spawns the Showing Screen fullscreen onto your TV/Projector.
             </p>
             
-            <button class="btn-accent" id="btn-launch-display" style="width: 100%;">
-              📺 Open Showing Screen
-            </button>
+            <!-- OBS-Style Split Button: Left = Auto-Launch, Right = Screen Picker -->
+            <div class="launch-split-btn" id="launch-split-btn-wrapper">
+              <button class="launch-main" id="btn-launch-display" title="Auto-detect and launch fullscreen on secondary display">
+                <span>📺</span>
+                <span>Open Showing Screen</span>
+              </button>
+              <button class="launch-chevron" id="btn-launch-chevron" title="Choose display to launch on">
+                ▾
+              </button>
+            </div>
+
+            <!-- Floating Display Selection Menu (OBS style) -->
+            <div class="display-select-menu" id="display-select-menu" style="display: none;">
+              <div class="display-select-header">🖥️ Select Output Display</div>
+              <div id="display-select-items">
+                <!-- Populated by JS -->
+              </div>
+            </div>
             
             <!-- Dynamic screen placement api feedback -->
             <div id="screen-api-feedback" style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
@@ -424,6 +439,9 @@
 
   <!-- Context Dropdown Floating Menu -->
   <div class="context-menu" id="custom-context-menu"></div>
+
+  <!-- Display Select Backdrop (closes menu on outside click) -->
+  <div id="display-select-backdrop" style="display:none; position:fixed; inset:0; z-index:998;"></div>
 
   <!-- Modal 6: Duplication Progress Modal -->
   <div class="modal-overlay" id="modal-duplication-progress">
