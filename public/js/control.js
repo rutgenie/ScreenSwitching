@@ -251,7 +251,11 @@ function renderAll() {
 function renderCollectionsList() {
   elCollectionList.innerHTML = '';
   if (!currentDbState || currentDbState.collections.length === 0) {
-    elCollectionList.innerHTML = '<li style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:12px;">No events created</li>';
+    elCollectionList.innerHTML = `
+      <li style="text-align:center; padding:16px 10px; list-style:none;">
+        <p style="color:var(--text-muted); font-size:0.78rem; margin:0 0 10px 0; line-height:1.4;">No events yet.<br>Create one to get started!</p>
+        <button onclick="openModal('modal-collection')" class="btn-primary" style="font-size:0.78rem; padding:6px 14px; width:100%;">＋ Create First Event</button>
+      </li>`;
     elActiveCollectionTitle.textContent = 'Select or Create an Event';
     if (elBtnDeleteCollection) elBtnDeleteCollection.style.display = 'none';
     return;
