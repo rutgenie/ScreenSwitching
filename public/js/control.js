@@ -2844,9 +2844,198 @@ if (previewBadge) {
   previewBadge.onclick = () => toggleWebRTCPreviewFreeze();
 }
 
+// ==========================================
+// WAKE LOCK — SCREEN SAVER / SLEEP PREVENTION
+// ==========================================
+
+const WakeLockManager = (() => {
+  let wakeLockSentinel = null;
+  let fallbackInterval = null;
+  let fallbackVideo = null;
+  let statusEl = null;
+  let isActive = false;
+
+  // Detect OS from user agent for logging context
+  function detectOS() {
+    const ua = navigator.userAgent;
+    if (/Mac OS X/.test(ua)) return 'macOS';
+    if (/Windows/.test(ua)) return 'Windows';
+    if (/Linux/.test(ua)) return 'Linux';
+    if (/Android/.test(ua)) return 'Android';
+    if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
+    return 'Unknown OS';
+  }
+
+  // Inject a persistent status badge into the sidebar
+  function createStatusBadge() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+
+    statusEl = document.createElement('div');
+    statusEl.id = 'wake-lock-status';
+    statusEl.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      margin: 0 0 8px 0;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 500;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      color: var(--text-secondary);
+      transition: color 0.3s, border-color 0.3s;
+    `;
+    statusEl.innerHTML = `
+      <span id="wake-lock-dot" style="width:7px;height:7px;border-radius:50%;background:#555;flex-shrink:0;transition:background 0.3s;"></span>
+      <span id="wake-lock-label">Sleep prevention: off</span>
+    `;
+
+    // Insert before the remote-pairing section
+    const pairingSection = sidebar.querySelector('.remote-pairing');
+    if (pairingSection) {
+      sidebar.insertBefore(statusEl, pairingSection);
+    } else {
+      sidebar.appendChild(statusEl);
+    }
+  }
+
+  function setStatusUI(active, method) {
+    if (!statusEl) return;
+    const dot = document.getElementById('wake-lock-dot');
+    const label = document.getElementById('wake-lock-label');
+    if (active) {
+      if (dot) dot.style.background = '#4ade80';
+      if (label) label.textContent = `Sleep prevention: ON (${method})`;
+      statusEl.style.borderColor = 'rgba(74,222,128,0.25)';
+      statusEl.style.color = '#4ade80';
+    } else {
+      if (dot) dot.style.background = '#555';
+      if (label) label.textContent = 'Sleep prevention: off';
+      statusEl.style.borderColor = 'rgba(255,255,255,0.06)';
+      statusEl.style.color = 'var(--text-secondary)';
+    }
+  }
+
+  // PRIMARY: Screen Wake Lock API (macOS Chrome/Edge/Firefox, Safari 16.4+, Windows, Linux)
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return false;
+    try {
+      wakeLockSentinel = await navigator.wakeLock.request('screen');
+      isActive = true;
+      const os = detectOS();
+      console.log(`[WakeLock] Screen Wake Lock acquired on ${os}. Screen saver and sleep are suppressed.`);
+
+      wakeLockSentinel.addEventListener('release', () => {
+        console.log('[WakeLock] Wake Lock was released by the system.');
+        isActive = false;
+        setStatusUI(false, '');
+      });
+
+      setStatusUI(true, 'Wake Lock API');
+      return true;
+    } catch (err) {
+      console.warn('[WakeLock] Wake Lock API failed:', err.message);
+      return false;
+    }
+  }
+
+  // FALLBACK: Hidden silent video loop (works in all browsers on all OS)
+  // Continuously playing a tiny silent video tricks the OS into keeping the screen on
+  function startFallback() {
+    if (fallbackVideo) return; // Already running
+
+    fallbackVideo = document.createElement('video');
+    fallbackVideo.setAttribute('playsinline', '');
+    fallbackVideo.setAttribute('muted', '');
+    fallbackVideo.muted = true;
+    fallbackVideo.loop = true;
+    fallbackVideo.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-1;';
+
+    // A 1×1 transparent WebM video encoded as a data URI (< 1 KB)
+    fallbackVideo.src = 'data:video/webm;base64,GkXfo0AgQoaBAUL3gQFC8oEEQvOBCFGwobjg2kAAAAAAAAACo4EEQrWcB03M9GjP2kAzs0t4BgINUikUqBKJaAaKaNTaAaFIaAEa' +
+      'WqHaAaFIaAEaWqHaAqFIaAEaWqHiAaFIaAEaWqHiAqFIaAEaWqHiAqFIaAEaWqHgAAAAIAAAA0AAGlgAAAA+AAAAAAAABZAAA' +
+      'ABgAAAAAAAAcAAABdAAAACgAAAAQAAABEAAAABAAAABAAAAAlAAAAEAAAAA4AAAAFAAAAFAAAAAgAAAANAAAACAAAAA8AAAAlAAAA';
+
+    document.body.appendChild(fallbackVideo);
+
+    fallbackVideo.play().then(() => {
+      isActive = true;
+      const os = detectOS();
+      console.log(`[WakeLock] Fallback video loop started on ${os}. Screen saver suppressed via media activity.`);
+      setStatusUI(true, 'Fallback (video loop)');
+    }).catch(err => {
+      console.warn('[WakeLock] Fallback video autoplay blocked:', err.message);
+      // Last resort: periodic DOM touch to signal user activity
+      startActivityHeartbeat();
+    });
+  }
+
+  // LAST RESORT: Periodic no-op event to hint activity (least reliable)
+  function startActivityHeartbeat() {
+    if (fallbackInterval) return;
+    fallbackInterval = setInterval(() => {
+      // Simulate a benign DOM mutation to prevent some browsers from sleeping
+      document.title = document.title;
+    }, 30000);
+    isActive = true;
+    console.log(`[WakeLock] Heartbeat fallback active on ${detectOS()}.`);
+    setStatusUI(true, 'Heartbeat');
+  }
+
+  // Re-acquire the lock after the tab comes back from being hidden (e.g. sleep/screensaver recovery)
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'visible' && !isActive) {
+      console.log('[WakeLock] Tab became visible again. Re-acquiring wake lock...');
+      start();
+    }
+  }
+
+  async function start() {
+    const apiSuccess = await acquireWakeLock();
+    if (!apiSuccess) {
+      startFallback();
+    }
+  }
+
+  function stop() {
+    if (wakeLockSentinel) {
+      wakeLockSentinel.release().catch(() => {});
+      wakeLockSentinel = null;
+    }
+    if (fallbackVideo) {
+      fallbackVideo.pause();
+      fallbackVideo.remove();
+      fallbackVideo = null;
+    }
+    if (fallbackInterval) {
+      clearInterval(fallbackInterval);
+      fallbackInterval = null;
+    }
+    isActive = false;
+    setStatusUI(false, '');
+    console.log('[WakeLock] Wake lock released.');
+  }
+
+  return { start, stop, createStatusBadge };
+})();
+
 // Start up routines
 window.onload = () => {
   checkMultiScreenSupport();
+
+  // Initialize sleep/screensaver prevention
+  WakeLockManager.createStatusBadge();
+  WakeLockManager.start();
+
+  // Re-acquire wake lock after screen saver / sleep recovery
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[WakeLock] Visibility restored — re-acquiring wake lock.');
+      WakeLockManager.start();
+    }
+  });
 
   // Overwrite confirm button bindings
   const btnYes = document.getElementById('btn-overwrite-confirm-yes');

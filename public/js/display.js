@@ -13,6 +13,90 @@ let peerConnection = null;
 let webrtcStream = null;
 
 // ==========================================
+// WAKE LOCK — SCREEN SAVER / SLEEP PREVENTION (Display Output)
+// ==========================================
+
+const WakeLockManager = (() => {
+  let wakeLockSentinel = null;
+  let fallbackVideo = null;
+  let fallbackInterval = null;
+  let isActive = false;
+
+  function detectOS() {
+    const ua = navigator.userAgent;
+    if (/Mac OS X/.test(ua)) return 'macOS';
+    if (/Windows/.test(ua)) return 'Windows';
+    if (/Linux/.test(ua)) return 'Linux';
+    if (/Android/.test(ua)) return 'Android';
+    if (/iPhone|iPad|iPod/.test(ua)) return 'iOS';
+    return 'Unknown OS';
+  }
+
+  // PRIMARY: Screen Wake Lock API
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) return false;
+    try {
+      wakeLockSentinel = await navigator.wakeLock.request('screen');
+      isActive = true;
+      console.log(`[Display WakeLock] Screen Wake Lock acquired on ${detectOS()}. TV output will stay alive.`);
+      wakeLockSentinel.addEventListener('release', () => {
+        console.log('[Display WakeLock] Wake Lock released by system.');
+        isActive = false;
+      });
+      return true;
+    } catch (err) {
+      console.warn('[Display WakeLock] Wake Lock API failed:', err.message);
+      return false;
+    }
+  }
+
+  // FALLBACK: Hidden silent 1×1 video loop — signals media activity to the OS
+  function startFallback() {
+    if (fallbackVideo) return;
+    fallbackVideo = document.createElement('video');
+    fallbackVideo.setAttribute('playsinline', '');
+    fallbackVideo.muted = true;
+    fallbackVideo.loop = true;
+    fallbackVideo.style.cssText = 'position:fixed;top:-1px;left:-1px;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-1;';
+    // A 1×1 transparent WebM encoded as a data URI (< 1 KB)
+    fallbackVideo.src = 'data:video/webm;base64,GkXfo0AgQoaBAUL3gQFC8oEEQvOBCFGwobjg2kAAAAAAAAACo4EEQrWcB03M9GjP2kAzs0t4BgINUikUqBKJaAaKaNTaAaFIaAEa' +
+      'WqHaAaFIaAEaWqHaAqFIaAEaWqHiAaFIaAEaWqHiAqFIaAEaWqHiAqFIaAEaWqHgAAAAIAAAA0AAGlgAAAA+AAAAAAAABZAAA' +
+      'ABgAAAAAAAAcAAABdAAAACgAAAAQAAABEAAAABAAAABAAAAAlAAAAEAAAAA4AAAAFAAAAFAAAAAgAAAANAAAACAAAAA8AAAAlAAAA';
+    document.body.appendChild(fallbackVideo);
+    fallbackVideo.play().then(() => {
+      isActive = true;
+      console.log(`[Display WakeLock] Fallback video loop active on ${detectOS()}.`);
+    }).catch(err => {
+      console.warn('[Display WakeLock] Fallback video blocked:', err.message);
+      startHeartbeat();
+    });
+  }
+
+  // LAST RESORT: DOM heartbeat
+  function startHeartbeat() {
+    if (fallbackInterval) return;
+    fallbackInterval = setInterval(() => { document.title = document.title; }, 30000);
+    isActive = true;
+    console.log(`[Display WakeLock] Heartbeat fallback active on ${detectOS()}.`);
+  }
+
+  async function start() {
+    const apiOk = await acquireWakeLock();
+    if (!apiOk) startFallback();
+  }
+
+  return { start };
+})();
+
+// Re-acquire wake lock whenever this tab becomes visible again (sleep/screensaver recovery)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    console.log('[Display WakeLock] Visibility restored — re-acquiring wake lock.');
+    WakeLockManager.start();
+  }
+});
+
+// ==========================================
 // 1. DOCK & FULLSCREEN TRIGGERS
 // ==========================================
 
@@ -171,7 +255,9 @@ socket.on('connect', () => {
   console.log('Showing Screen registered with WebSocket Server.');
   socket.emit('register-client', { role: 'display' });
   reportDisplayStatus();
+  WakeLockManager.start(); // Prevent screen saver / sleep on every connect (including after recovery)
 });
+
 
 // Initial state load
 socket.on('sync-state', (data) => {
