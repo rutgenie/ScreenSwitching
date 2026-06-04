@@ -63,6 +63,12 @@
           <h2 id="active-collection-title">Select or Create an Event</h2>
         </div>
         <div class="workspace-actions">
+          <!-- Update notification button (hidden until update detected) -->
+          <button id="btn-update-available" class="btn-update-notif" style="display: none;" onclick="openUpdateModal()" title="A new version is available!">
+            <span class="update-pulse-dot"></span>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            <span id="btn-update-label">Update Available</span>
+          </button>
         </div>
       </header>
       
@@ -454,6 +460,44 @@
         <div class="progress-bar-fill" id="duplication-progress-bar-fill" style="width: 0%; height: 100%; background: var(--primary); transition: width 0.1s ease;"></div>
       </div>
       <div class="progress-txt" id="duplication-progress-text" style="margin-top: 8px; font-weight: bold; text-align: center; color: var(--accent);">0%</div>
+    </div>
+  </div>
+
+  <!-- Modal: Update Available -->
+  <div class="modal-overlay" id="modal-update">
+    <div class="modal-content" style="width: 500px;">
+      <div class="modal-header">
+        <h3>🚀 New Update Available</h3>
+        <button class="btn-icon" onclick="closeModal('modal-update')">×</button>
+      </div>
+      <div style="padding: 4px 0 20px;">
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 20px; padding: 16px; background: rgba(139,92,246,0.1); border: 1px solid rgba(139,92,246,0.3); border-radius: 10px;">
+          <div style="font-size: 2.5rem; line-height: 1;">🎉</div>
+          <div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px;">New version available</div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span id="update-current-ver" style="font-size: 0.9rem; color: var(--text-secondary); font-family: monospace; background: rgba(0,0,0,0.3); padding: 2px 8px; border-radius: 4px;"></span>
+              <svg viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px; color: var(--accent); fill: var(--accent);"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              <span id="update-latest-ver" style="font-size: 0.9rem; color: var(--success); font-weight: 700; font-family: monospace; background: rgba(16,185,129,0.1); padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(16,185,129,0.3);"></span>
+            </div>
+          </div>
+        </div>
+        <div style="margin-bottom: 8px;">
+          <label style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em;">Release Name</label>
+          <div id="update-release-name" style="font-size: 1rem; font-weight: 600; color: var(--text-primary); margin-top: 4px;"></div>
+        </div>
+        <div id="update-release-notes-wrapper" style="margin-top: 14px; display: none;">
+          <label style="font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em;">What's New</label>
+          <div id="update-release-notes" style="margin-top: 6px; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; font-size: 0.82rem; color: var(--text-secondary); line-height: 1.6; max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;"></div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn-secondary" onclick="closeModal('modal-update')">Remind Me Later</button>
+        <a id="update-download-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-primary" style="text-decoration: none;">
+          <svg viewBox="0 0 24 24" fill="currentColor" style="width: 16px; height: 16px;"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          Download Update
+        </a>
+      </div>
     </div>
   </div>
 

@@ -1561,6 +1561,96 @@ io.on('connection', (socket) => {
   });
 });
 
+// Update Check: Proxy GitHub Releases API to avoid browser CORS issues
+const PACKAGE_JSON_PATH = path.join(__dirname, 'package.json');
+let appPackage = { version: '1.0.0', repository: { url: '' } };
+try {
+  appPackage = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, 'utf8'));
+} catch (e) {
+  console.warn('Could not read package.json for update check:', e.message);
+}
+
+function getGithubRepoPath() {
+  const repoUrl = (appPackage.repository && appPackage.repository.url) || '';
+  // Supports formats: https://github.com/owner/repo or git+https://github.com/owner/repo.git
+  const match = repoUrl.match(/github\.com[/:]([^/]+\/[^/.]+?)(?:\.git)?$/);
+  return match ? match[1] : null;
+}
+
+app.get('/api/check-update', async (req, res) => {
+  const repoPath = getGithubRepoPath();
+  if (!repoPath) {
+    return res.json({ updateAvailable: false, error: 'No GitHub repository configured in package.json.' });
+  }
+
+  const currentVersion = appPackage.version || '0.0.0';
+  const apiUrl = `https://api.github.com/repos/${repoPath}/releases/latest`;
+
+  try {
+    // Use Node's built-in https module for the outbound request
+    const https = require('https');
+    const options = {
+      hostname: 'api.github.com',
+      path: `/repos/${repoPath}/releases/latest`,
+      method: 'GET',
+      headers: {
+        'User-Agent': 'ScreenSwitching-UpdateChecker/1.0',
+        'Accept': 'application/vnd.github.v3+json'
+      },
+      timeout: 8000
+    };
+
+    const githubReq = https.request(options, (githubRes) => {
+      let data = '';
+      githubRes.on('data', chunk => { data += chunk; });
+      githubRes.on('end', () => {
+        try {
+          if (githubRes.statusCode === 404) {
+            // No releases published yet
+            return res.json({ updateAvailable: false, currentVersion, latestVersion: currentVersion, noReleases: true });
+          }
+          if (githubRes.statusCode !== 200) {
+            return res.json({ updateAvailable: false, error: `GitHub API returned status ${githubRes.statusCode}` });
+          }
+
+          const release = JSON.parse(data);
+          const latestTag = (release.tag_name || '').replace(/^v/, '');
+          const releaseUrl = release.html_url || `https://github.com/${repoPath}/releases`;
+          const releaseName = release.name || latestTag;
+          const releaseBody = release.body || '';
+
+          // Semantic version comparison: split by dots and compare numerically
+          const parseVer = v => v.split('.').map(n => parseInt(n, 10) || 0);
+          const cur = parseVer(currentVersion);
+          const lat = parseVer(latestTag);
+          let updateAvailable = false;
+          for (let i = 0; i < Math.max(cur.length, lat.length); i++) {
+            const c = cur[i] || 0, l = lat[i] || 0;
+            if (l > c) { updateAvailable = true; break; }
+            if (c > l) { break; }
+          }
+
+          res.json({ updateAvailable, currentVersion, latestVersion: latestTag, releaseUrl, releaseName, releaseBody });
+        } catch (parseErr) {
+          res.json({ updateAvailable: false, error: 'Failed to parse GitHub API response.' });
+        }
+      });
+    });
+
+    githubReq.on('error', (err) => {
+      res.json({ updateAvailable: false, error: `Network error: ${err.message}` });
+    });
+    githubReq.on('timeout', () => {
+      githubReq.destroy();
+      res.json({ updateAvailable: false, error: 'GitHub API request timed out.' });
+    });
+    githubReq.end();
+
+  } catch (err) {
+    res.json({ updateAvailable: false, error: err.message });
+  }
+});
+
 // Resolve local network IP address
 function getLocalIPs() {
   const interfaces = os.networkInterfaces();

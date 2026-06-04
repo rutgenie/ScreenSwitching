@@ -3074,3 +3074,95 @@ window.onload = () => {
     };
   }
 };
+
+// ==========================================
+// UPDATE SYSTEM — GitHub Release Checker
+// ==========================================
+
+let _latestUpdateData = null; // Cache the last update check result
+
+/**
+ * Check for a new version on GitHub via the server-side proxy.
+ * Shows the update button in the top-right if a newer version is available.
+ * Re-runs every 4 hours while the page is open.
+ */
+async function checkForUpdates() {
+  try {
+    const res = await fetch('/api/check-update');
+    if (!res.ok) return;
+
+    const data = await res.json();
+    if (data.error) {
+      console.info('[UpdateCheck] Could not check for updates:', data.error);
+      return;
+    }
+
+    console.info(`[UpdateCheck] Current: v${data.currentVersion} | Latest: v${data.latestVersion} | Update available: ${data.updateAvailable}`);
+
+    if (data.updateAvailable) {
+      _latestUpdateData = data;
+
+      // Respect "Remind Me Later" — suppress the button if user already dismissed this version
+      const dismissedVer = localStorage.getItem('updateDismissedVersion');
+      const btn = document.getElementById('btn-update-available');
+      if (btn) {
+        if (dismissedVer !== data.latestVersion) {
+          const label = document.getElementById('btn-update-label');
+          if (label) label.textContent = `v${data.latestVersion} Available`;
+          btn.style.display = 'inline-flex';
+        }
+      }
+    }
+  } catch (err) {
+    console.info('[UpdateCheck] Network error, skipping update check:', err.message);
+  }
+}
+
+/**
+ * Open the update details modal and populate it with the release info.
+ */
+function openUpdateModal() {
+  if (!_latestUpdateData) return;
+
+  const d = _latestUpdateData;
+
+  const elCurrentVer = document.getElementById('update-current-ver');
+  const elLatestVer = document.getElementById('update-latest-ver');
+  const elReleaseName = document.getElementById('update-release-name');
+  const elReleaseNotes = document.getElementById('update-release-notes');
+  const elReleaseNotesWrapper = document.getElementById('update-release-notes-wrapper');
+  const elDownloadLink = document.getElementById('update-download-link');
+
+  if (elCurrentVer) elCurrentVer.textContent = `v${d.currentVersion}`;
+  if (elLatestVer) elLatestVer.textContent = `v${d.latestVersion}`;
+  if (elReleaseName) elReleaseName.textContent = d.releaseName || `Version ${d.latestVersion}`;
+
+  if (d.releaseBody && d.releaseBody.trim()) {
+    if (elReleaseNotes) elReleaseNotes.textContent = d.releaseBody;
+    if (elReleaseNotesWrapper) elReleaseNotesWrapper.style.display = 'block';
+  } else {
+    if (elReleaseNotesWrapper) elReleaseNotesWrapper.style.display = 'none';
+  }
+
+  if (elDownloadLink) {
+    elDownloadLink.href = d.releaseUrl || '#';
+  }
+
+  openModal('modal-update');
+}
+
+// When the user clicks "Remind Me Later", save the version they dismissed
+// so we don't keep bugging them on every refresh for the same version.
+document.getElementById('modal-update')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (btn && btn.textContent.trim() === 'Remind Me Later' && _latestUpdateData) {
+    localStorage.setItem('updateDismissedVersion', _latestUpdateData.latestVersion);
+    document.getElementById('btn-update-available').style.display = 'none';
+  }
+});
+
+// Kick off the first check 3 seconds after page load (let everything else settle first)
+setTimeout(checkForUpdates, 3000);
+
+// Re-check every 4 hours while the control panel remains open
+setInterval(checkForUpdates, 4 * 60 * 60 * 1000);
